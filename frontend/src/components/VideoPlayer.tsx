@@ -3,45 +3,97 @@ import Hls from 'hls.js';
 import styles from './VideoPlayer.module.css';
 
 interface Channel {
+  name: string;
   onid: number;
   tsid: number;
   sid: number;
-  name?: string;
+  type: 'GR' | 'BS' | 'CS' | 'OTHERS';
+  isSub: boolean;
 }
 
-interface VideoPlayerProps {
-  defaultChannel?: Channel;
-}
-
-export const VideoPlayer: React.FC<VideoPlayerProps> = ({
-  defaultChannel = { onid: 32736, tsid: 32736, sid: 1024, name: 'NHK総合' }
-}) => {
+export const VideoPlayer: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [currentChannel, setCurrentChannel] = useState<Channel>(defaultChannel);
+  
+  // チャンネルデータ関連
+  const [allChannels, setAllChannels] = useState<Channel[]>([]);
+  const [selectedType, setSelectedType] = useState<'GR' | 'BS' | 'CS'>('GR'); // 1. 放送波タイプ
+  const [currentChannel, setCurrentChannel] = useState<Channel | null>(null); // 2. 選択中の局
+
+  // 再生状態
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [hlsInstance, setHlsInstance] = useState<Hls | null>(null);
-
-  // ★ 1. isStreaming State の定義
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(true);
 
-  // 配信開始処理
+  // 1. 初回ロード時にチャンネル一覧を取得
+  useEffect(() => {
+    const fetchChannels = async () => {
+      try {
+        const res = await fetch('/api/channels');
+        const data: Channel[] = await res.json();
+        
+        // メインチャンネル（isSub === false）のみ抽出
+        const mainChannels = data.filter(c => !c.isSub);
+        setAllChannels(mainChannels);
+
+        // 初期選択：地デジの最初の局（例：NHK総合）
+        const defaultGr = mainChannels.find(c => c.type === 'GR');
+        if (defaultGr) setCurrentChannel(defaultGr);
+      } catch (err) {
+        console.error('Failed to fetch channels:', err);
+      }
+    };
+
+    fetchChannels();
+  }, []);
+
+  // 現在の放送波タイプに該当する局リスト（2つ目のドロップダウン用）
+  const filteredChannels = allChannels.filter(c => c.type === selectedType);
+
+  // 放送波タイプ切替時：切り替えた波の最初の局を自動選択
+  const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const type = e.target.value as 'GR' | 'BS' | 'CS';
+    setSelectedType(type);
+
+    const firstCh = allChannels.find(c => c.type === type);
+    if (firstCh) {
+      setCurrentChannel(firstCh);
+      // すでに視聴中なら即時チャンネル切り替え
+      if (isStreaming) {
+        startStream(firstCh);
+      }
+    }
+  };
+
+  // 局切替時
+  const handleChannelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const [onid, tsid, sid] = e.target.value.split('-').map(Number);
+    const targetCh = allChannels.find(c => c.onid === onid && c.tsid === tsid && c.sid === sid);
+    if (targetCh) {
+      setCurrentChannel(targetCh);
+      // すでに視聴中なら即時チャンネル切り替え
+      if (isStreaming) {
+        startStream(targetCh);
+      }
+    }
+  };
+
+  // ストリーム開始処理
   const startStream = async (channel: Channel) => {
     try {
-      const { onid, tsid, sid } = channel;
-      const res = await fetch(`/api/stream?onid=${onid}&tsid=${tsid}&sid=${sid}`);
+      const res = await fetch(`/api/stream?onid=${channel.onid}&tsid=${channel.tsid}&sid=${channel.sid}`);
       const data = await res.json();
 
       if (data.playlist) {
         setStreamUrl(data.playlist);
-        setIsStreaming(true); // ★ 配信中に更新
+        setIsStreaming(true);
       }
     } catch (err) {
       console.error('Failed to start stream:', err);
     }
   };
 
-  // 配信停止処理
+  // ストリーム停止処理
   const stopStream = async () => {
     if (hlsInstance) {
       hlsInstance.destroy();
@@ -53,36 +105,32 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       console.error('Failed to stop stream:', err);
     }
     setStreamUrl(null);
-    setIsStreaming(false); // ★ 停止状態に更新
+    setIsStreaming(false);
   };
 
-  // 視聴開始/終了 トグルボタン
+  // トグルボタン
   const handleToggleStream = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isStreaming) {
       stopStream();
-    } else {
+    } else if (currentChannel) {
       startStream(currentChannel);
     }
   };
 
-  // ★ 2. ハートビート通知処理 (isStreaming が true の間だけ5秒おきに送信)
+  // ハートビート
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
-
     if (isStreaming) {
       intervalId = setInterval(async () => {
         try {
           await fetch('/api/stream/heartbeat', { method: 'POST' });
         } catch (err) {
-          console.error('Heartbeat send failed:', err);
+          console.error('Heartbeat failed:', err);
         }
       }, 5000);
     }
-
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
+    return () => { if (intervalId) clearInterval(intervalId); };
   }, [isStreaming]);
 
   // HLS再生紐付け
@@ -101,24 +149,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         video.play().catch(console.error);
       });
 
-      return () => {
-        hls.destroy();
-      };
+      return () => { hls.destroy(); };
     }
   }, [streamUrl]);
 
-  // ブラウザ閉じ・タブ閉じ時の自動停止
+  // タブ閉じ時停止
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      navigator.sendBeacon('/api/stream/stop');
-    };
+    const handleBeforeUnload = () => { navigator.sendBeacon('/api/stream/stop'); };
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
+    return () => { window.removeEventListener('beforeunload', handleBeforeUnload); };
   }, []);
 
-  // 画面タップでミュート解除
+  // ミュート解除
   const handleUserInteraction = () => {
     if (videoRef.current && isMuted) {
       videoRef.current.muted = false;
@@ -128,13 +170,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   return (
     <div className={styles.playerContainer} onClick={handleUserInteraction}>
-      <div className={styles.controls}>
+      <div className={styles.controls} onClick={(e) => e.stopPropagation()}>
+        {/* 開始/終了 ボタン */}
         <button
           onClick={handleToggleStream}
           className={isStreaming ? styles.stopButton : styles.startButton}
         >
           {isStreaming ? '■ 視聴終了' : '▶ 視聴開始'}
         </button>
+
+        {/* 1. 放送波選択 (地デジ / BS / CS) */}
+        <select value={selectedType} onChange={handleTypeChange} className={styles.select}>
+          <option value="GR">地デジ</option>
+          <option value="BS">BS</option>
+          <option value="CS">CS</option>
+        </select>
+
+        {/* 2. チャンネル（局）選択 */}
+        <select
+          value={currentChannel ? `${currentChannel.onid}-${currentChannel.tsid}-${currentChannel.sid}` : ''}
+          onChange={handleChannelChange}
+          className={styles.select}
+        >
+          {filteredChannels.map(ch => (
+            <option key={`${ch.onid}-${ch.tsid}-${ch.sid}`} value={`${ch.onid}-${ch.tsid}-${ch.sid}`}>
+              {ch.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       {isStreaming && isMuted && (
