@@ -10,6 +10,8 @@ TS抜き環境でTVを遠隔で観る為のアプリです。
 わからない事や困った事があったら Gemini(無償版で可)に聞いてください。  
 その際は、最初にこの概要をコピペしてGeminiに投げて下さい。  
 
+<img src="https://github.com/user-attachments/assets/5e529db3-a865-42ea-83aa-f929c6591c10" width="50%">
+
 # 設計
 * 今も開発が継続しており、安定しているEDCBを使う。
 * 開発言語は、Node.js+React と最もメジャーな構成。
