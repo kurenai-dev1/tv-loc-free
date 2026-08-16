@@ -13,8 +13,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.text()); // ★ sendBeacon 対策 (タブ閉じ時の停止通知用)
 
 // APIルーティング
-app.use('/api', streamRoutes);
-app.use('/api', channelRoutes); // ★ 追加 (/api/channels)
+app.use('/api/stream', streamRoutes);
+app.use('/api/channel', channelRoutes); // ★ 追加 (/api/channels)
 
 // 生成された HLS ファイルを静的配信 (CORS許可)
 app.use('/hls', express.static(path.join(__dirname, 'public/hls')));

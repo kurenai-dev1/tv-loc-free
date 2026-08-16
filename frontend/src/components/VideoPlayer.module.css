@@ -1,55 +1,139 @@
-.playerContainer {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+.container {
   width: 100%;
-}
+  max-width: 860px;
+  margin: 0 auto;
 
-.selectGroup {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  justify-content: flex-end;
-}
-
-.selectGroup label {
-  font-size: 0.875rem;
-  color: var(--text-muted);
-}
-
-.selectControl {
-  background-color: var(--card-bg);
-  border: 1px solid var(--border-color);
-  color: var(--text-main);
-  padding: 0.375rem 0.75rem;
-  border-radius: 0.375rem;
-  font-size: 0.875rem;
-  outline: none;
-}
-
-.videoWrapper {
-  background-color: #000;
-  border-radius: 0.5rem;
-  overflow: hidden;
-  aspect-ratio: 16 / 9;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
-}
-
-.videoWrapper video {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-/* モバイル対応 */
-@media (max-width: 640px) {
-  .selectGroup {
-    width: 100%;
-    justify-content: space-between;
+  .title {
+    text-align: center;
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 24px 0;
+    color: var(--text-main);
+    letter-spacing: 0.5px;
   }
 
-  .selectControl {
-    flex: 1;
-    max-width: 160px;
+  .card {
+    background-color: var(--card-bg);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    border: 1px solid var(--card-border);
+
+    /* 映像エリア */
+    .screen {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background-color: #000000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+    }
+
+    /* 下部コントロールバー */
+    .controls {
+      padding: 14px 20px;
+      background-color: rgba(15, 23, 42, 0.6);
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+
+      /* ボタン領域（左） */
+      .actionArea {
+        display: flex;
+        align-items: center;
+
+        .btn {
+          height: 40px;
+          padding: 0 20px;
+          border: none;
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 600;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: var(--text-main);
+          transition: background-color 0.2s ease, transform 0.1s ease;
+
+          &:active {
+            transform: translateY(1px);
+          }
+
+          &.start {
+            background-color: var(--primary);
+
+            &:hover {
+              background-color: var(--primary-hover);
+            }
+          }
+
+          &.stop {
+            background-color: var(--danger);
+
+            &:hover {
+              background-color: var(--danger-hover);
+            }
+          }
+
+          &:disabled {
+            background-color: var(--disabled);
+            cursor: not-allowed;
+            opacity: 0.5;
+          }
+        }
+      }
+
+      /* 選局領域（右） */
+      .selectArea {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex: 1;
+        max-width: 440px;
+        justify-content: flex-end;
+
+        .select {
+          height: 40px;
+          padding: 0 12px;
+          background-color: var(--input-bg);
+          color: var(--text-main);
+          border: 1px solid var(--border-color);
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 500;
+          cursor: pointer;
+          outline: none;
+          box-sizing: border-box;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+          &:hover {
+            border-color: var(--text-muted);
+          }
+
+          &:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-focus);
+          }
+
+          &.typeSelect {
+            width: 100px;
+          }
+
+          &.channelSelect {
+            flex: 1;
+            max-width: 320px;
+          }
+        }
+      }
+    }
   }
 }
