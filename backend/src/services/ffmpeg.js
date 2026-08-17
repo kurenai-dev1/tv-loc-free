@@ -4,7 +4,6 @@ const path = require('path');
 const config = require('../config/env');
 const { openChannel, closeChannel } = require('./edcbControl');
 
-
 let activeProcess = null;
 let currentChannelKey = null;
 let isStarting = false;
@@ -61,50 +60,54 @@ function cleanHlsDir() {
 }
 
 /**
- * エンコーダーに応じた FFmpeg オプションの生成
+ * エンコーダーおよび設定された画質リストに応じた FFmpeg 引数（Stream マッピング・オプション）を動的に生成
  */
-function getVideoEncoderArgs() {
+function buildDynamicFFmpegArgs() {
   const isQsv = config.FFMPEG_ENCODER === 'qsv';
+  const qualities = config.ACTIVE_QUALITIES; // 例: ['720p', '480p', '360p']
+  
+  console.log(`[FFmpeg] Target qualities: ${qualities.join(', ')} (Encoder: ${isQsv ? 'QSV' : 'CPU'})`);
 
-  if (isQsv) {
-    console.log('[FFmpeg] Using QSV Hardware Encoding');
-    return {
-      global: [], // 単体テストで動作したシンプルな構成
-      
-      // 720p Stream
-      v0: [
-        '-c:v:0', 'h264_qsv',
-        '-preset:v:0', 'veryfast',
-        '-b:v:0', '2.5M',
-        '-s:v:0', '1280x720'
-      ],
-      
-      // 480p Stream
-      v1: [
-        '-c:v:1', 'h264_qsv',
-        '-preset:v:1', 'veryfast',
-        '-b:v:1', '1M',
-        '-s:v:1', '854x480'
-      ],
-    };
-  }
+  const streamMapParts = [];
+  const encodeArgs = [];
 
-  // CPU (libx264) フォールバック時
-  console.log('[FFmpeg] Using CPU (libx264) Encoding');
+  qualities.forEach((qKey, index) => {
+    const profile = config.QUALITY_PROFILES[qKey];
+    if (!profile) return;
+
+    // 入力TSストリームの 映像0:a:0 と 音声0:a:0 を各ストリームへマップ
+    encodeArgs.push('-map', '0:v:0', '-map', '0:a:0');
+
+    // 映像オプションの生成
+    if (isQsv) {
+      encodeArgs.push(
+        `-c:v:${index}`, 'h264_qsv',
+        `-preset:v:${index}`, 'veryfast',
+        `-b:v:${index}`, profile.videoBitrate,
+        `-s:v:${index}`, `${profile.width}x${profile.height}`
+      );
+    } else {
+      encodeArgs.push(
+        `-c:v:${index}`, 'libx264',
+        `-preset:v:${index}`, 'ultrafast',
+        `-b:v:${index}`, profile.videoBitrate,
+        `-s:v:${index}`, `${profile.width}x${profile.height}`
+      );
+    }
+
+    // 音声オプションの生成
+    encodeArgs.push(
+      `-c:a:${index}`, 'aac',
+      `-b:a:${index}`, profile.audioBitrate
+    );
+
+    // var_stream_map 用のエントリを作成 (例: "v:0,a:0")
+    streamMapParts.push(`v:${index},a:${index}`);
+  });
+
   return {
-    global: [],
-    v0: [
-      '-c:v:0', 'libx264',
-      '-preset:v:0', 'ultrafast',
-      '-b:v:0', '2.5M',
-      '-s:v:0', '1280x720'
-    ],
-    v1: [
-      '-c:v:1', 'libx264',
-      '-preset:v:1', 'ultrafast',
-      '-b:v:1', '1M',
-      '-s:v:1', '854x480'
-    ],
+    encodeArgs,
+    varStreamMap: streamMapParts.join(' '), // 例: "v:0,a:0 v:1,a:1 v:2,a:2"
   };
 }
 
@@ -168,12 +171,11 @@ async function startStream(onid, tsid, sid, callback) {
   isStarting = true;
 
   try {
-    // ★ チャンネル切り替えの判定
+    // チャンネル切り替えの判定
     const isChannelChange = activeProcess !== null && currentChannelKey !== channelKey;
 
     if (isChannelChange) {
       console.log(`[ffmpeg] Channel change detected: ${currentChannelKey} -> ${channelKey}`);
-      // チューナー（closeChannel）や HLS ファイル（cleanHlsDir）は破棄せず、FFmpeg プロセスのみ kill
       if (activeProcess) {
         const proc = activeProcess;
         activeProcess = null;
@@ -185,7 +187,6 @@ async function startStream(onid, tsid, sid, callback) {
     }
 
     console.log(`Sending NWTV set channel command: ONID=${onid}, TSID=${tsid}, SID=${sid}`);
-    // EDCB に選局コマンド送信（EDCB 側で地デジ/BSのチューナー選択・選局が処理されます）
     await openChannel(onid, tsid, sid);
     currentChannelKey = channelKey;
 
@@ -196,25 +197,17 @@ async function startStream(onid, tsid, sid, callback) {
     // パイプ接続安定のためわずかに待機
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    // ★ エンコーダー設定を取得
-    const encoder = getVideoEncoderArgs();
+    // 動的に FFmpeg 引数を生成
+    const dynamicConfig = buildDynamicFFmpegArgs();
 
     const ffmpegArgs = [
-      ...(encoder.global || []),
       '-y',
       '-analyzeduration', '3000000',
       '-probesize', '3000000',
       '-i', pipePath,
 
-      // 720p Stream (v:0, a:0)
-      '-map', '0:v:0', '-map', '0:a:0',
-      ...(encoder.v0 || []),
-      '-c:a:0', 'aac', '-b:a:0', '128k',
-
-      // 480p Stream (v:1, a:1)
-      '-map', '0:v:0', '-map', '0:a:0',
-      ...(encoder.v1 || []),
-      '-c:a:1', 'aac', '-b:a:1', '96k',
+      // 動的生成されたマップおよびエンコードパラメータ
+      ...dynamicConfig.encodeArgs,
 
       // HLS オプション設定
       '-f', 'hls',
@@ -224,7 +217,7 @@ async function startStream(onid, tsid, sid, callback) {
       '-sc_threshold', '0',
       '-hls_list_size', '3',
       '-hls_flags', 'delete_segments+omit_endlist+independent_segments',
-      '-var_stream_map', 'v:0,a:0 v:1,a:1',
+      '-var_stream_map', dynamicConfig.varStreamMap,
       '-master_pl_name', 'master.m3u8',
       path.join(config.HLS_DIR, 'stream_%v.m3u8')
     ];
@@ -260,13 +253,6 @@ async function startStream(onid, tsid, sid, callback) {
   }
 }
 
-// services/ffmpeg.js の例
-
-let ffmpegProcess = null;
-
-/**
- * FFmpeg プロセスを完全に強制終了して終了を待つ関数
- */
 /**
  * FFmpeg プロセスおよび EDCB チューナーを完全に停止する
  */
@@ -291,7 +277,6 @@ async function stopStream() {
 
       try {
         if (process.platform === 'win32') {
-          // Windows は taskkill でプロセスツリーごと確実に終了してパイプを解放
           require('child_process').execSync(`taskkill /F /T /PID ${proc.pid}`);
         } else {
           proc.kill('SIGKILL');
@@ -303,7 +288,7 @@ async function stopStream() {
 
     currentChannelKey = null;
 
-    // 3. ★ EDCB チューナーの開放（ここを確実に呼び出す）
+    // 3. EDCB チューナーの開放
     console.log('[stopStream] Calling closeChannel()...');
     await closeChannel();
 

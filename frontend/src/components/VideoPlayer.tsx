@@ -11,6 +11,12 @@ interface Channel {
   isSub?: boolean;
 }
 
+// 画質データの型定義
+interface QualityLevel {
+  index: number;
+  label: string;
+}
+
 export const VideoPlayer: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -23,8 +29,12 @@ export const VideoPlayer: React.FC = () => {
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [hlsInstance, setHlsInstance] = useState<Hls | null>(null);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
-  const [isChangingChannel, setIsChangingChannel] = useState<boolean>(false); // 状態フラグを追加
+  const [isChangingChannel, setIsChangingChannel] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(true);
+
+  // 画質切替用の State
+  const [qualities, setQualities] = useState<QualityLevel[]>([]);
+  const [currentQuality, setCurrentQuality] = useState<number>(-1); // -1 は Auto (自動)
 
   // 1. 初回ロード時にチャンネル一覧を取得
   useEffect(() => {
@@ -63,6 +73,8 @@ export const VideoPlayer: React.FC = () => {
       video.load(); // ブラウザ内部のデコーダーバッファを強制解放
     }
     setStreamUrl(null);
+    setQualities([]);      // 画質リストクリア
+    setCurrentQuality(-1); // Auto にリセット
   };
 
   // ストリーム開始 / 選局切り替え処理
@@ -145,27 +157,34 @@ export const VideoPlayer: React.FC = () => {
       hls.attachMedia(video);
       setHlsInstance(hls);
 
-hls.on(Hls.Events.MANIFEST_PARSED, () => {
-  if (videoRef.current) {
-    // 1. 最初からミュート解除（音あり）で再生を試みる
-    videoRef.current.muted = false;
-    
-    videoRef.current.play().then(() => {
-      // 再生成功（音ありでそのまま再生）
-      setIsMuted(false);
-    }).catch((err) => {
-      console.warn('Autoplay with audio blocked. Falling back to muted play.', err);
-      // ブラウザにブロックされた場合のみミュートにして再試行
-      if (videoRef.current) {
-        videoRef.current.muted = true;
-        setIsMuted(true);
-        videoRef.current.play().catch(console.error);
-      }
-    });
-  }
-});
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        // ★ 1. master.m3u8 に含まれる画質レベル一覧を取得して State に保存
+        if (hls.levels.length > 0) {
+          const levelList: QualityLevel[] = hls.levels.map((level, index) => ({
+            index,
+            label: `${level.height}p`,
+          }));
+          setQualities(levelList);
+        }
 
-      // ★ 新局の最初のフレームが実際に画面に描画された瞬間だけ opacity='1' に復帰
+        // 2. 自動再生試行
+        if (videoRef.current) {
+          videoRef.current.muted = false;
+          
+          videoRef.current.play().then(() => {
+            setIsMuted(false);
+          }).catch((err) => {
+            console.warn('Autoplay with audio blocked. Falling back to muted play.', err);
+            if (videoRef.current) {
+              videoRef.current.muted = true;
+              setIsMuted(true);
+              videoRef.current.play().catch(console.error);
+            }
+          });
+        }
+      });
+
+      // 新局の最初のフレームが実際に画面に描画された瞬間だけ opacity='1' に復帰
       const handlePlaying = () => {
         if (videoRef.current) {
           videoRef.current.style.opacity = '1';
@@ -244,6 +263,15 @@ hls.on(Hls.Events.MANIFEST_PARSED, () => {
     }
   };
 
+  // ★ 画質変更ハンドラー
+  const handleQualityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const levelIndex = Number(e.target.value);
+    setCurrentQuality(levelIndex);
+    if (hlsInstance) {
+      hlsInstance.currentLevel = levelIndex; // -1 (Auto) または各インデックス (0, 1, 2...)
+    }
+  };
+
   // 音声解除用タップ処理
   const handleUserInteraction = () => {
     if (videoRef.current && isMuted) {
@@ -259,7 +287,7 @@ hls.on(Hls.Events.MANIFEST_PARSED, () => {
         <div className={styles.screen}>
           <video ref={videoRef} controls playsInline />
  
-         {/* ★ 選局中のオーバーレイ表示 */}
+          {/* 選局中のオーバーレイ表示 */}
           {isChangingChannel && (
             <div style={{
               position: 'absolute',
@@ -274,7 +302,7 @@ hls.on(Hls.Events.MANIFEST_PARSED, () => {
               alignItems: 'center',
               justifyContent: 'center',
               zIndex: 10,
-              pointerEvents: 'none' // 下のイベントを阻害しない
+              pointerEvents: 'none'
             }}>
               <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>
                 選局中...
@@ -331,6 +359,22 @@ hls.on(Hls.Events.MANIFEST_PARSED, () => {
                 </option>
               ))}
             </select>
+
+            {/* ★ 3. 解像度（画質）切り替え (ストリーミング中で画質リストが存在する場合のみ表示) */}
+            {isStreaming && qualities.length > 0 && (
+              <select
+                value={currentQuality}
+                onChange={handleQualityChange}
+                className={`${styles.select} ${styles.qualitySelect}`}
+              >
+                <option value={-1}>画質: 自動</option>
+                {qualities.map((q) => (
+                  <option key={q.index} value={q.index}>
+                    {q.label}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
       </div>
