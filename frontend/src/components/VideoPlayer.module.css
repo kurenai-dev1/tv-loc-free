@@ -37,31 +37,37 @@
 
     /* 下部コントロールバー */
     .controls {
-      padding: 14px 20px;
+      padding: 12px 16px;
       background-color: rgba(15, 23, 42, 0.6);
       border-top: 1px solid var(--border-color);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      gap: 12px;
+      flex-wrap: wrap; /* ★ 画面幅が狭いときに自動で折り返す */
 
       /* ボタン領域（左） */
       .actionArea {
         display: flex;
         align-items: center;
+        flex-shrink: 0; /* ★ ボタンの縦・横潰れを防止 */
 
         .btn {
           height: 40px;
-          padding: 0 20px;
+          padding: 0 16px;
           border: none;
           border-radius: 8px;
           font-size: 14px;
           font-weight: 600;
           cursor: pointer;
-          display: flex;
+          display: inline-flex;
           align-items: center;
+          justify-content: center;
           gap: 8px;
           color: var(--text-main);
+          white-space: nowrap; /* ★ 変形・改行を防止 */
+          flex-shrink: 0;
+          box-sizing: border-box;
           transition: background-color 0.2s ease, transform 0.1s ease;
 
           &:active {
@@ -96,19 +102,19 @@
       .selectArea {
         display: flex;
         align-items: center;
-        gap: 10px;
-        flex: 1;
-        max-width: 440px;
-        justify-content: flex-end;
+        gap: 8px;
+        flex: 1 1 280px; /* ★ 画面幅に合わせて伸縮＆折り返し */
+        min-width: 0;    /* ★ 子要素の横スクロール突き抜けを防止 */
+        max-width: 100%;
 
         .select {
           height: 40px;
-          padding: 0 12px;
+          padding: 0 8px;
           background-color: var(--input-bg);
           color: var(--text-main);
           border: 1px solid var(--border-color);
           border-radius: 8px;
-          font-size: 14px;
+          font-size: 13px;
           font-weight: 500;
           cursor: pointer;
           outline: none;
@@ -125,12 +131,24 @@
           }
 
           &.typeSelect {
-            width: 100px;
+            flex: 0 0 auto;
+            width: auto;
+            min-width: 80px;
           }
 
           &.channelSelect {
-            flex: 1;
-            max-width: 320px;
+            flex: 1 1 auto;
+            min-width: 120px;
+            max-width: 100%;
+            text-overflow: ellipsis; /* 長いチャンネル名を省略 */
+            white-space: nowrap;
+            overflow: hidden;
+          }
+
+          &.qualitySelect {
+            flex: 0 0 auto;
+            width: auto;
+            min-width: 90px;
           }
         }
       }
