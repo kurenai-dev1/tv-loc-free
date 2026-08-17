@@ -17,6 +17,9 @@ interface QualityLevel {
   label: string;
 }
 
+// ★ localStorage のキー名
+const STORAGE_KEY = 'video_player_settings';
+
 export const VideoPlayer: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -32,28 +35,66 @@ export const VideoPlayer: React.FC = () => {
   const [isChangingChannel, setIsChangingChannel] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(true);
 
-  // 画質切替用の State
-  const [qualities, setQualities] = useState<QualityLevel[]>([]);
-  const [currentQuality, setCurrentQuality] = useState<number>(-1); // -1 は Auto (自動)
+  // モード・画質設定用 State
+  const [streamMode, setStreamMode] = useState<'multi' | 'single'>('multi');
+  const [availableQualities, setAvailableQualities] = useState<string[]>([]);
+  const [selectedQuality, setSelectedQuality] = useState<string>(''); // singleモード用
+  const [qualities, setQualities] = useState<QualityLevel[]>([]);       // multiモード用
+  const [currentQuality, setCurrentQuality] = useState<number>(-1);     // multiモード用
 
-  // 1. 初回ロード時にチャンネル一覧を取得
+  // 1. 初回ロード時にチャンネル一覧・サーバー設定・localStorageの保存値を復元
   useEffect(() => {
-    const fetchChannels = async () => {
+    const fetchInitialData = async () => {
       try {
+        // ★ localStorage から前回の保存値を取得
+        const savedRaw = localStorage.getItem(STORAGE_KEY);
+        const saved = savedRaw ? JSON.parse(savedRaw) : null;
+
+        // サーバー設定（モード、画質リスト）の取得
+        const configRes = await fetch('/api/stream/config');
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          setStreamMode(configData.mode);
+          setAvailableQualities(configData.qualities || []);
+
+          // 画質の復元: 保存値があれば優先、なければ先頭の値
+          if (saved?.quality && configData.qualities?.includes(saved.quality)) {
+            setSelectedQuality(saved.quality);
+          } else if (configData.qualities?.length > 0) {
+            setSelectedQuality(configData.qualities[0]);
+          }
+        }
+
+        // チャンネル取得
         const res = await fetch('/api/channel/channels');
         const data: Channel[] = await res.json();
-        
         const mainChannels = data.filter(c => !c.isSub);
         setAllChannels(mainChannels);
 
-        const defaultGr = mainChannels.find(c => c.type === 'GR');
-        if (defaultGr) setCurrentChannel(defaultGr);
+        // 放送波タイプの復元（デフォルト GR）
+        const targetType = saved?.selectedType || 'GR';
+        setSelectedType(targetType);
+
+        // チャンネルの復元
+        let targetCh: Channel | undefined;
+        if (saved?.channelKey) {
+          const [onid, tsid, sid] = saved.channelKey.split('-').map(Number);
+          targetCh = mainChannels.find(c => c.onid === onid && c.tsid === tsid && c.sid === sid);
+        }
+
+        // 保存されたチャンネルがない・見つからない場合は該当タイプの1曲目
+        if (!targetCh) {
+          targetCh = mainChannels.find(c => c.type === targetType);
+        }
+
+        if (targetCh) setCurrentChannel(targetCh);
+
       } catch (err) {
-        console.error('Failed to fetch channels:', err);
+        console.error('Failed to fetch initial data:', err);
       }
     };
 
-    fetchChannels();
+    fetchInitialData();
   }, []);
 
   const filteredChannels = allChannels.filter(c => c.type === selectedType);
@@ -67,34 +108,46 @@ export const VideoPlayer: React.FC = () => {
     if (videoRef.current) {
       const video = videoRef.current;
       video.pause();
-      // 一瞬黒画面にして前局の残像を見せないようにする
       video.style.opacity = '0';
       video.removeAttribute('src');
-      video.load(); // ブラウザ内部のデコーダーバッファを強制解放
+      video.load();
     }
     setStreamUrl(null);
-    setQualities([]);      // 画質リストクリア
-    setCurrentQuality(-1); // Auto にリセット
+    setQualities([]);      
+    setCurrentQuality(-1); 
   };
 
   // ストリーム開始 / 選局切り替え処理
-  const startStream = async (channel: Channel) => {
+  const startStream = async (channel: Channel, quality?: string) => {
     try {
-      setIsChangingChannel(true); // ボタン連打防止
-
-      // 既存の HLS と画面バッファを強制クリア
+      setIsChangingChannel(true);
       resetHls();
 
-      // バックエンドへ選局依頼（バックエンドが TS 生成まで待ってから 200 OK を返す）
+      const targetQuality = quality || selectedQuality;
+
+      // ★ 視聴開始のタイミングで localStorage に設定をまとめて保存！
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          selectedType: channel.type,
+          channelKey: `${channel.onid}-${channel.tsid}-${channel.sid}`,
+          quality: targetQuality,
+        }));
+      } catch (e) {
+        console.error('Failed to save settings to localStorage:', e);
+      }
+
       const res = await fetch('/api/stream/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ onid: channel.onid, tsid: channel.tsid, sid: channel.sid }),
+        body: JSON.stringify({ 
+          onid: channel.onid, 
+          tsid: channel.tsid, 
+          sid: channel.sid,
+          quality: targetQuality
+        }),
       });
 
-      if (!res.ok) {
-        throw new Error('Stream start timed out or failed');
-      }
+      if (!res.ok) throw new Error('Stream start timed out or failed');
 
       const data = await res.json();
 
@@ -148,8 +201,8 @@ export const VideoPlayer: React.FC = () => {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        backBufferLength: 0,            // 過去バッファ即時除去
-        liveSyncDurationCount: 1,       // 最新セグメント優先
+        backBufferLength: 0,            
+        liveSyncDurationCount: 1,       
         liveMaxLatencyDurationCount: 3,
       });
 
@@ -158,7 +211,6 @@ export const VideoPlayer: React.FC = () => {
       setHlsInstance(hls);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        // ★ 1. master.m3u8 に含まれる画質レベル一覧を取得して State に保存
         if (hls.levels.length > 0) {
           const levelList: QualityLevel[] = hls.levels.map((level, index) => ({
             index,
@@ -167,7 +219,6 @@ export const VideoPlayer: React.FC = () => {
           setQualities(levelList);
         }
 
-        // 2. 自動再生試行
         if (videoRef.current) {
           videoRef.current.muted = false;
           
@@ -184,7 +235,6 @@ export const VideoPlayer: React.FC = () => {
         }
       });
 
-      // 新局の最初のフレームが実際に画面に描画された瞬間だけ opacity='1' に復帰
       const handlePlaying = () => {
         if (videoRef.current) {
           videoRef.current.style.opacity = '1';
@@ -192,7 +242,6 @@ export const VideoPlayer: React.FC = () => {
       };
       video.addEventListener('playing', handlePlaying, { once: true });
 
-      // ネットワーク/メディアエラー時の復帰処理
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
           switch (data.type) {
@@ -263,12 +312,21 @@ export const VideoPlayer: React.FC = () => {
     }
   };
 
-  // ★ 画質変更ハンドラー
+  // 画質変更ハンドラー
   const handleQualityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const levelIndex = Number(e.target.value);
-    setCurrentQuality(levelIndex);
-    if (hlsInstance) {
-      hlsInstance.currentLevel = levelIndex; // -1 (Auto) または各インデックス (0, 1, 2...)
+    const val = e.target.value;
+
+    if (streamMode === 'multi') {
+      const levelIndex = Number(val);
+      setCurrentQuality(levelIndex);
+      if (hlsInstance) {
+        hlsInstance.currentLevel = levelIndex;
+      }
+    } else {
+      setSelectedQuality(val);
+      if (currentChannel && isStreaming) {
+        startStream(currentChannel, val);
+      }
     }
   };
 
@@ -360,20 +418,37 @@ export const VideoPlayer: React.FC = () => {
               ))}
             </select>
 
-            {/* ★ 3. 解像度（画質）切り替え (ストリーミング中で画質リストが存在する場合のみ表示) */}
-            {isStreaming && qualities.length > 0 && (
-              <select
-                value={currentQuality}
-                onChange={handleQualityChange}
-                className={`${styles.select} ${styles.qualitySelect}`}
-              >
-                <option value={-1}>画質: 自動</option>
-                {qualities.map((q) => (
-                  <option key={q.index} value={q.index}>
-                    {q.label}
-                  </option>
-                ))}
-              </select>
+            {/* 3. 解像度（画質）切り替え */}
+            {streamMode === 'multi' ? (
+              isStreaming && qualities.length > 0 && (
+                <select
+                  value={currentQuality}
+                  onChange={handleQualityChange}
+                  className={`${styles.select} ${styles.qualitySelect}`}
+                >
+                  <option value={-1}>画質: 自動</option>
+                  {qualities.map((q) => (
+                    <option key={q.index} value={q.index}>
+                      {q.label}
+                    </option>
+                  ))}
+                </select>
+              )
+            ) : (
+              availableQualities.length > 0 && (
+                <select
+                  value={selectedQuality}
+                  onChange={handleQualityChange}
+                  disabled={isChangingChannel}
+                  className={`${styles.select} ${styles.qualitySelect}`}
+                >
+                  {availableQualities.map((q) => (
+                    <option key={q} value={q}>
+                      {q}
+                    </option>
+                  ))}
+                </select>
+              )
             )}
           </div>
         </div>

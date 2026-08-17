@@ -62,11 +62,15 @@ function cleanHlsDir() {
 /**
  * エンコーダーおよび設定された画質リストに応じた FFmpeg 引数（Stream マッピング・オプション）を動的に生成
  */
-function buildDynamicFFmpegArgs() {
+// ffmpeg.js
+function buildDynamicFFmpegArgs(mode, targetQuality) {
   const isQsv = config.FFMPEG_ENCODER === 'qsv';
-  const qualities = config.ACTIVE_QUALITIES; // 例: ['720p', '480p', '360p']
-  
-  console.log(`[FFmpeg] Target qualities: ${qualities.join(', ')} (Encoder: ${isQsv ? 'QSV' : 'CPU'})`);
+
+  // single モードの場合は、指定された画質 1 本のみ
+  // multi モードの場合は ACTIVE_QUALITIES 全体を使用
+  const qualities = (mode === 'single') 
+    ? [targetQuality || config.ACTIVE_QUALITIES[0]] 
+    : config.ACTIVE_QUALITIES;
 
   const streamMapParts = [];
   const encodeArgs = [];
@@ -75,11 +79,10 @@ function buildDynamicFFmpegArgs() {
     const profile = config.QUALITY_PROFILES[qKey];
     if (!profile) return;
 
-    // 入力TSストリームの 映像0:a:0 と 音声0:a:0 を各ストリームへマップ
     encodeArgs.push('-map', '0:v:0', '-map', '0:a:0');
 
-    // 映像オプションの生成
     if (isQsv) {
+      console.log('[FFMPEG] Use QSV Encode.');
       encodeArgs.push(
         `-c:v:${index}`, 'h264_qsv',
         `-preset:v:${index}`, 'veryfast',
@@ -95,21 +98,20 @@ function buildDynamicFFmpegArgs() {
       );
     }
 
-    // 音声オプションの生成
     encodeArgs.push(
       `-c:a:${index}`, 'aac',
-      `-b:a:${index}`, profile.audioBitrate
+      `-b:a:${index}`, '128k'
     );
 
-    // var_stream_map 用のエントリを作成 (例: "v:0,a:0")
     streamMapParts.push(`v:${index},a:${index}`);
   });
 
   return {
     encodeArgs,
-    varStreamMap: streamMapParts.join(' '), // 例: "v:0,a:0 v:1,a:1 v:2,a:2"
+    varStreamMap: streamMapParts.join(' '),
   };
 }
+
 
 async function findSendTsPipe(timeoutMs = 5000) {
   const startTime = Date.now();
@@ -153,7 +155,7 @@ async function waitForFile(filePath, timeoutMs = 15000) {
   throw new Error(`Timeout waiting for file generation: ${filePath}`);
 }
 
-async function startStream(onid, tsid, sid, callback) {
+async function startStream(onid, tsid, sid, quality, callback) {
   const channelKey = `${onid}-${tsid}-${sid}`;
 
   // 1. 既に同じチャンネルが稼働中なら既存のプレイリストを返す
@@ -198,7 +200,8 @@ async function startStream(onid, tsid, sid, callback) {
     await new Promise(resolve => setTimeout(resolve, 500));
 
     // 動的に FFmpeg 引数を生成
-    const dynamicConfig = buildDynamicFFmpegArgs();
+    const mode = config.STREAM_MODE || 'single'; // config/env からモードを取得
+    const dynamicConfig = buildDynamicFFmpegArgs(mode, quality);
 
     const ffmpegArgs = [
       '-y',

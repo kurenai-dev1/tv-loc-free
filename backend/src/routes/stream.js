@@ -69,7 +69,8 @@ router.post('/heartbeat', (req, res) => {
  * 配信開始 API (POST /api/stream/start)
  */
 router.post('/start', async (req, res) => {
-  const { onid, tsid, sid } = req.body;
+  // ★ 1. req.body から quality を受け取る
+  const { onid, tsid, sid, quality } = req.body;
 
   if (onid === undefined || tsid === undefined || sid === undefined) {
     return res.status(400).json({ error: 'Missing onid, tsid, or sid' });
@@ -79,17 +80,17 @@ router.post('/start', async (req, res) => {
   const numTsid = parseInt(tsid, 10);
   const numSid = parseInt(sid, 10);
 
-  console.log(`[API /stream] Starting stream for ONID:${numOnid}, TSID:${numTsid}, SID:${numSid}`);
+  console.log(`[API /stream] Starting stream for ONID:${numOnid}, TSID:${numTsid}, SID:${numSid}, Quality:${quality || 'default'}`);
 
   try {
     // 1. 古い FFmpeg プロセスの終了 ＆ HLS ディレクトリのクリア
     await stopStream();
     cleanHlsDirectory(HLS_DIR_PATH);
 
-    // 2. FFmpeg 起動（非同期で呼び出し）
-    // 注意: startStream がコールバック形式の場合は Promise 化して呼び出します
+    // 2. FFmpeg 起動
+    // ★ 2. startStream に numOnid, numTsid, numSid, quality, callback の順番で渡す
     await new Promise((resolve, reject) => {
-      startStream(numOnid, numTsid, numSid, (err, playlist) => {
+      startStream(numOnid, numTsid, numSid, quality, (err, playlist) => {
         if (err) reject(err);
         else resolve(playlist);
       });
@@ -126,6 +127,21 @@ router.post('/stop', async (req, res) => {
     console.error('[API Error] Failed to stop stream:', err);
     res.status(500).json({ error: 'Failed to stop stream', details: err.message });
   }
+});
+
+// GET /api/stream/config
+router.get('/config', (req, res) => {
+  // .env から STREAM_MODE と STREAM_QUALITIES を取得
+  const mode = process.env.STREAM_MODE || 'multi';
+  const qualities = process.env.STREAM_QUALITIES 
+    ? process.env.STREAM_QUALITIES.split(',') 
+    : ['720p', '480p', '360p'];
+
+  res.json({
+    mode,               // 'multi' または 'single'
+    qualities,          // ['720p', '480p', '360p']
+    defaultQuality: qualities[0] || '720p',
+  });
 });
 
 module.exports = router;
