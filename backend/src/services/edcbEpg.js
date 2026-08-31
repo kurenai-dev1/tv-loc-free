@@ -15,7 +15,7 @@ function getEpgData({ channel, startDate, endDate } = {}) {
     const start = startDate ? new Date(startDate) : new Date();
     const end = endDate ? new Date(endDate) : new Date(start.getTime() + 24 * 60 * 60 * 1000);
 
-    console.log(`${start.toISOString()}～${end.toISOString()}`);
+    // console.log(`${start.toISOString()}～${end.toISOString()}`);
 
     const client = net.connect({ port, host }, () => {
       const packet = Buffer.alloc(48);
@@ -63,10 +63,14 @@ function getEpgData({ channel, startDate, endDate } = {}) {
         const resCode = responseBuffer.readUInt32LE(0);
         const dataSize = responseBuffer.readUInt32LE(4);
 
-        if (resCode !== 1) return reject(new Error(`EDCB Command Error Code: ${resCode}`));
-
-        const body = responseBuffer.subarray(8, 8 + dataSize);
-        const parsedData = parsePgInfoExResponse(body);
+        let parsedData = null; 
+         // if (resCode !== 1) return reject(new Error(`EDCB Command Error Code: ${resCode} ${channel}`));
+        if (resCode !== 1) {
+          console.log(`EDCB Command Error Code: ${resCode} ${channel}`);
+        } else {
+          const body = responseBuffer.subarray(8, 8 + dataSize);
+          parsedData = parsePgInfoExResponse(body);
+        }
         resolve(parsedData);
       } catch (err) {
         reject(err);

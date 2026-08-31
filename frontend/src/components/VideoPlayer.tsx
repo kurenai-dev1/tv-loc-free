@@ -457,7 +457,7 @@ export const VideoPlayer: React.FC = () => {
 
                 return (
                   <option key={chKey} value={chKey}>
-                    {ch.name.padEnd(10, ' ')} {timeStr} {titleStr}
+                    {ch.name.padEnd(10, '　')} {timeStr} {titleStr}
                   </option>
                 );
               })}

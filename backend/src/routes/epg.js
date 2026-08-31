@@ -36,6 +36,9 @@ router.get('/current', async (req, res) => {
 
     const epgData = await getEpgObject( channel, startDate, endDate );
 
+    if( !epgData ) {
+      return res.json(null);
+    }
     const programs = Array.isArray(epgData.programs) ? epgData.programs : [epgData.programs];
     if (!programs) {
       return res.json(null);

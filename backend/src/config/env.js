@@ -29,6 +29,7 @@ const jellyfinChannels = [
   { id: '32391-32391-23608', name: 'TOKYO MX1'},
   { id: '32375-32375-24632', name: 'ｔｖｋ１'},
   { id: '32295-32295-29752', name: 'テレ玉１'},
+  { id: '32399-32399-23672', name: 'J:COM'},
 ];
 
 module.exports = {

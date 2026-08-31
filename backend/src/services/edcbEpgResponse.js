@@ -56,27 +56,33 @@ function parseHeaderBlock(buf, offset) {
   const sid  = buf.readUInt16LE(offset + 4);
   const channelId = `${onid}-${tsid}-${sid}`;
   // console.log(`channelId ${channelId}`);  
-  offset += 6;
+  offset += 6; 
+  offset += 2; // 01 00 (unknown)
 
-  offset += 8; // ???
-
+  // 地デジでは空文字が多い BSは正式名
   let strSize = buf.readUInt32LE(offset)-4; // -4 自身の長さ
-  offset +=4;
+  offset += 4;
+  const preName = readWString(buf, offset, strSize-2); // -2="00 00"
+  // console.log(`preName ${preName}`);  
+  offset += strSize;
 
+  // 局名(通称)
+  strSize = buf.readUInt32LE(offset)-4; // -4 自身の長さ
+  offset +=4;
   const serviceName = readWString(buf, offset, strSize-2);
   // console.log(`serviceName ${serviceName}`);  
   offset += strSize;
 
+  // 地域
   strSize = buf.readUInt32LE(offset)-4; 
   offset +=4;
-
   const areaName = readWString(buf, offset, strSize-2);
   // console.log(`areaName ${areaName}`);  
   offset += strSize;
 
+  // 補足 空文字が多い
   strSize = buf.readUInt32LE(offset)-4;
   offset +=4;
-
   const subName = readWString(buf, offset, strSize-2);
   // console.log(`subName ${subName}`);  
   offset += strSize;
