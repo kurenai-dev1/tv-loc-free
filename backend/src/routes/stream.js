@@ -2,9 +2,13 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
+const { jellyfinChannels } = require('../config/env');
+const { startEdcbTuner, stopEdcbTuner } = require('../services/edcbStream');
+const { getActiveProcess } = require('../services/ffmpeg');
 
 // サービス層から関数を読み込み
-const { startStream, stopStream, updateHeartbeat } = require('../services/ffmpeg');
+const { startStream, stopStream} = require('../services/ffmpeg');
+const { updateHeartbeat } = require('../services/edcbStream');
 
 // HLS出力先の絶対パス（環境に合わせて調整してください）
 const HLS_DIR_PATH = path.join(__dirname, '../../public/hls');
@@ -62,7 +66,11 @@ function cleanHlsDirectory(dirPath) {
 // ハートビート受信用 API (POST /api/stream/heartbeat)
 router.post('/heartbeat', (req, res) => {
   updateHeartbeat();
-  res.json({ status: 'ok' });
+
+  // FFmpeg プロセスが存在し、終了していなければ true
+  const activeProcess = getActiveProcess();
+  const isStreaming = activeProcess !== null && !activeProcess.killed;
+  res.json({ status: 'ok', isStreaming: isStreaming });
 });
 
 /**
@@ -104,6 +112,7 @@ router.post('/start', async (req, res) => {
       await stopStream();
       return res.status(504).json({ error: 'Stream generation timed out.' });
     }
+    updateHeartbeat();
 
     // 4. 準備完了後にレスポンスを返す
     return res.json({ success: true, playlist: '/hls/master.m3u8', url: '/hls/master.m3u8' });
@@ -142,6 +151,61 @@ router.get('/config', (req, res) => {
     qualities,          // ['720p', '480p', '360p']
     defaultQuality: qualities[0] || '720p',
   });
+});
+
+/**
+ * Jellyfin 用 Direct TS データ配信 API
+ * GET /api/stream/live/:channelId
+ */
+router.get('/live/:channelId', async (req, res) => {
+  const { channelId } = req.params;
+  const targetCh = jellyfinChannels.find(ch => ch.id === channelId);
+
+  if (!targetCh) return res.status(404).send('Channel not found');
+
+  const [onid, tsid, sid] = channelId.split('-').map(v => parseInt(v, 10));
+  console.log(`[Jellyfin Direct TS] 視聴開始: ${targetCh.name} (${channelId})`);
+
+  res.setHeader('Content-Type', 'video/mp2t');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Connection', 'keep-alive');
+
+  let readStream = null;
+
+  try {
+    const pipePath = await startEdcbTuner(onid, tsid, sid);
+
+    readStream = fs.createReadStream(pipePath);
+
+    // ★ EPIPE / ECONNRESET 等のパイプ切断エラーをハンドリングして落ちないようにする
+    readStream.on('error', (err) => {
+      // EPIPE は接続先（JellyfinのFFmpeg）が急に切れた際によく出る正常な切断エラー
+      if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
+        console.log(`[Jellyfin Direct TS] パイプ切断を検知 (${err.code}): 正常終了処理を行います`);
+      } else {
+        console.error('[Jellyfin Direct TS Stream Error]', err.message);
+      }
+      if (readStream) {
+        readStream.destroy();
+      }
+    });
+
+    readStream.pipe(res);
+
+    req.on('close', async () => {
+      console.log(`[Jellyfin Direct TS] 切断検出: ${targetCh.name}`);
+      if (readStream) {
+        readStream.destroy();
+      }
+      await stopEdcbTuner();
+    });
+
+  } catch (err) {
+    console.error('[Jellyfin Direct TS Error]', err);
+    if (!res.headersSent) res.status(500).send('Streaming error');
+    if (readStream) readStream.destroy();
+    await stopEdcbTuner();
+  }
 });
 
 module.exports = router;

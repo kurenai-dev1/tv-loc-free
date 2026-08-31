@@ -11,13 +11,18 @@ interface Channel {
   isSub?: boolean;
 }
 
-// 画質データの型定義
 interface QualityLevel {
   index: number;
   label: string;
 }
 
-// ★ localStorage のキー名
+// 番組情報の型定義
+interface CurrentProgram {
+  title: string;
+  startTime: string; // "19:00"
+  endTime: string;   // "19:30"
+}
+
 const STORAGE_KEY = 'video_player_settings';
 
 export const VideoPlayer: React.FC = () => {
@@ -27,6 +32,9 @@ export const VideoPlayer: React.FC = () => {
   const [allChannels, setAllChannels] = useState<Channel[]>([]);
   const [selectedType, setSelectedType] = useState<'GR' | 'BS' | 'CS'>('GR');
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
+
+  // 各チャンネルの番組情報を保持する Map（キー: "onid-tsid-sid"）
+  const [epgMap, setEpgMap] = useState<Record<string, CurrentProgram>>({});
 
   // 再生状態
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
@@ -38,26 +46,26 @@ export const VideoPlayer: React.FC = () => {
   // モード・画質設定用 State
   const [streamMode, setStreamMode] = useState<'multi' | 'single'>('multi');
   const [availableQualities, setAvailableQualities] = useState<string[]>([]);
-  const [selectedQuality, setSelectedQuality] = useState<string>(''); // singleモード用
-  const [qualities, setQualities] = useState<QualityLevel[]>([]);       // multiモード用
-  const [currentQuality, setCurrentQuality] = useState<number>(-1);     // multiモード用
+  const [selectedQuality, setSelectedQuality] = useState<string>('');
+  const [qualities, setQualities] = useState<QualityLevel[]>([]);
+  const [currentQuality, setCurrentQuality] = useState<number>(-1);
 
-  // 1. 初回ロード時にチャンネル一覧・サーバー設定・localStorageの保存値を復元
+  // エラーメッセージ用のステート
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // 初回データ取得
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
-        // ★ localStorage から前回の保存値を取得
         const savedRaw = localStorage.getItem(STORAGE_KEY);
         const saved = savedRaw ? JSON.parse(savedRaw) : null;
 
-        // サーバー設定（モード、画質リスト）の取得
         const configRes = await fetch('/api/stream/config');
         if (configRes.ok) {
           const configData = await configRes.json();
           setStreamMode(configData.mode);
           setAvailableQualities(configData.qualities || []);
 
-          // 画質の復元: 保存値があれば優先、なければ先頭の値
           if (saved?.quality && configData.qualities?.includes(saved.quality)) {
             setSelectedQuality(saved.quality);
           } else if (configData.qualities?.length > 0) {
@@ -65,24 +73,20 @@ export const VideoPlayer: React.FC = () => {
           }
         }
 
-        // チャンネル取得
         const res = await fetch('/api/channel/channels');
         const data: Channel[] = await res.json();
         const mainChannels = data.filter(c => !c.isSub);
         setAllChannels(mainChannels);
 
-        // 放送波タイプの復元（デフォルト GR）
         const targetType = saved?.selectedType || 'GR';
         setSelectedType(targetType);
 
-        // チャンネルの復元
         let targetCh: Channel | undefined;
         if (saved?.channelKey) {
           const [onid, tsid, sid] = saved.channelKey.split('-').map(Number);
           targetCh = mainChannels.find(c => c.onid === onid && c.tsid === tsid && c.sid === sid);
         }
 
-        // 保存されたチャンネルがない・見つからない場合は該当タイプの1曲目
         if (!targetCh) {
           targetCh = mainChannels.find(c => c.type === targetType);
         }
@@ -99,7 +103,30 @@ export const VideoPlayer: React.FC = () => {
 
   const filteredChannels = allChannels.filter(c => c.type === selectedType);
 
-  // HLS インスタンスと Video タグの完全リセット関数
+  // 表示対象の各チャンネルごとに個別に API を呼び出して番組情報を更新
+  const fetchCurrentEpgForFilteredChannels = () => {
+    filteredChannels.forEach(async (ch) => {
+      const chKey = `${ch.onid}-${ch.tsid}-${ch.sid}`;
+
+      try {
+        const res = await fetch(
+          `/api/epg/current?channel=${chKey}`
+        );
+        if (res.ok) {
+          const data: CurrentProgram | null = await res.json();
+          if (data) {
+            setEpgMap(prev => ({
+              ...prev,
+              [chKey]: data,
+            }));
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to fetch EPG for ${chKey}:`, err);
+      }
+    });
+  };
+
   const resetHls = () => {
     if (hlsInstance) {
       hlsInstance.destroy();
@@ -117,15 +144,14 @@ export const VideoPlayer: React.FC = () => {
     setCurrentQuality(-1); 
   };
 
-  // ストリーム開始 / 選局切り替え処理
   const startStream = async (channel: Channel, quality?: string) => {
     try {
+      setErrorMessage(null);
       setIsChangingChannel(true);
       resetHls();
 
       const targetQuality = quality || selectedQuality;
 
-      // ★ 視聴開始のタイミングで localStorage に設定をまとめて保存！
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
           selectedType: channel.type,
@@ -159,13 +185,13 @@ export const VideoPlayer: React.FC = () => {
       console.error('Failed to start stream:', err);
       setIsStreaming(false);
       resetHls();
+      setErrorMessage('配信の開始に失敗しました。');
     } finally {
       setIsChangingChannel(false);
     }
   };
 
-  // ストリーム停止処理
-  const stopStream = async () => {
+  const stopStream = async (reason?: string) => {
     resetHls();
     try {
       await fetch('/api/stream/stop', { method: 'POST' });
@@ -173,15 +199,31 @@ export const VideoPlayer: React.FC = () => {
       console.error('Failed to stop stream:', err);
     }
     setIsStreaming(false);
+    if (reason) {
+      setErrorMessage(reason);
+    }
   };
 
-  // ハートビート（5秒ごと）
+  // ★ チャンネル変更中の停止検知を抑止するハートビート処理
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
     if (isStreaming) {
       intervalId = setInterval(async () => {
+        // チャンネル変更中はサーバー側の停止状態チェックをスキップ
+        if (isChangingChannel) {
+          return;
+        }
+
         try {
-          await fetch('/api/stream/heartbeat', { method: 'POST' });
+          const res = await fetch('/api/stream/heartbeat', { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            // タイミングによる誤検知を防ぐため、再度 isChangingChannel を確認
+            if (data.isStreaming === false && !isChangingChannel) {
+              console.warn('[Heartbeat] Server stream process has died. Cleaning up...');
+              stopStream('サーバー側で配信処理（FFmpeg）が停止しました。');
+            }
+          }
         } catch (err) {
           console.error('Heartbeat failed:', err);
         }
@@ -190,9 +232,8 @@ export const VideoPlayer: React.FC = () => {
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [isStreaming]);
+  }, [isStreaming, isChangingChannel]); // ★ isChangingChannel を依存配列に追加
 
-  // HLS再生＆アタッチメント処理
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !streamUrl) return;
@@ -275,7 +316,6 @@ export const VideoPlayer: React.FC = () => {
     }
   }, [streamUrl]);
 
-  // タブ閉じたときの安全停止
   useEffect(() => {
     const handleBeforeUnload = () => {
       navigator.sendBeacon('/api/stream/stop');
@@ -286,7 +326,6 @@ export const VideoPlayer: React.FC = () => {
     };
   }, []);
 
-  // 放送波タイプ切替時
   const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const type = e.target.value as 'GR' | 'BS' | 'CS';
     setSelectedType(type);
@@ -300,7 +339,6 @@ export const VideoPlayer: React.FC = () => {
     }
   };
 
-  // 局切替時
   const handleChannelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const [onid, tsid, sid] = e.target.value.split('-').map(Number);
     const targetCh = allChannels.find(c => c.onid === onid && c.tsid === tsid && c.sid === sid);
@@ -312,7 +350,6 @@ export const VideoPlayer: React.FC = () => {
     }
   };
 
-  // 画質変更ハンドラー
   const handleQualityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
 
@@ -330,7 +367,6 @@ export const VideoPlayer: React.FC = () => {
     }
   };
 
-  // 音声解除用タップ処理
   const handleUserInteraction = () => {
     if (videoRef.current && isMuted) {
       videoRef.current.muted = false;
@@ -341,35 +377,28 @@ export const VideoPlayer: React.FC = () => {
   return (
     <div className={styles.container} onClick={handleUserInteraction}>
       <div className={styles.card}>
-        {/* ビデオ表示領域 */}
         <div className={styles.screen}>
           <video ref={videoRef} controls playsInline />
- 
-          {/* 選局中のオーバーレイ表示 */}
+
           {isChangingChannel && (
-            <div style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              backgroundColor: 'rgba(0, 0, 0, 0.6)',
-              color: '#ffffff',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 10,
-              pointerEvents: 'none'
-            }}>
-              <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>
-                選局中...
-              </div>
+            <div className={styles.loadingOverlay}>
+              <div className={styles.loadingText}>選局中...</div>
+            </div>
+          )}
+
+          {errorMessage && (
+            <div className={styles.overlay}>
+              <p className={styles.errorMessage}>{errorMessage}</p>
+              <button 
+                className={styles.closeBtn} 
+                onClick={() => setErrorMessage(null)}
+              >
+                閉じる
+              </button>
             </div>
           )}
         </div>
 
-        {/* 下部コントロールパネル */}
         <div className={styles.controls} onClick={(e) => e.stopPropagation()}>
           <div className={styles.actionArea}>
             {!isStreaming ? (
@@ -382,7 +411,7 @@ export const VideoPlayer: React.FC = () => {
               </button>
             ) : (
               <button
-                onClick={stopStream}
+                onClick={() => stopStream()}
                 disabled={isChangingChannel}
                 className={`${styles.btn} ${styles.stop}`}
               >
@@ -392,7 +421,6 @@ export const VideoPlayer: React.FC = () => {
           </div>
 
           <div className={styles.selectArea}>
-            {/* 1. 放送波切り替え */}
             <select
               value={selectedType}
               onChange={handleTypeChange}
@@ -404,21 +432,37 @@ export const VideoPlayer: React.FC = () => {
               <option value="CS">CS</option>
             </select>
 
-            {/* 2. チャンネル（局）切り替え */}
+            {/* フォーカス時（セレクトボックスを開いた時）に対象チャンネル分を個別取得 */}
             <select
               value={currentChannel ? `${currentChannel.onid}-${currentChannel.tsid}-${currentChannel.sid}` : ''}
               onChange={handleChannelChange}
+              onFocus={fetchCurrentEpgForFilteredChannels}
               disabled={isChangingChannel}
               className={`${styles.select} ${styles.channelSelect}`}
             >
-              {filteredChannels.map(ch => (
-                <option key={`${ch.onid}-${ch.tsid}-${ch.sid}`} value={`${ch.onid}-${ch.tsid}-${ch.sid}`}>
-                  {ch.name}
+              {/* 選択後の表示用（閉じている時）：局名のみ表示 */}
+              {currentChannel && (
+                <option value={`${currentChannel.onid}-${currentChannel.tsid}-${currentChannel.sid}`} hidden>
+                  {currentChannel.name}
                 </option>
-              ))}
+              )}
+
+              {/* プルダウン展開時のリスト */}
+              {filteredChannels.map(ch => {
+                const chKey = `${ch.onid}-${ch.tsid}-${ch.sid}`;
+                const epg = epgMap[chKey];
+
+                const timeStr = epg ? `[${epg.startTime}～${epg.endTime}]` : '[ --:--～--:-- ]';
+                const titleStr = epg ? epg.title : '番組情報なし';
+
+                return (
+                  <option key={chKey} value={chKey}>
+                    {ch.name.padEnd(10, ' ')} {timeStr} {titleStr}
+                  </option>
+                );
+              })}
             </select>
 
-            {/* 3. 解像度（画質）切り替え */}
             {streamMode === 'multi' ? (
               isStreaming && qualities.length > 0 && (
                 <select

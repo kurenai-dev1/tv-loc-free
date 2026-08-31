@@ -3,7 +3,8 @@ const cors = require('cors');
 const path = require('path');
 const config = require('./src/config/env');
 const streamRoutes = require('./src/routes/stream');
-const channelRoutes = require('./src/routes/channels'); // ★ 追加
+const channelRoutes = require('./src/routes/channels'); 
+const epgRoutes = require('./src/routes/epg');
 
 const app = express();
 
@@ -14,7 +15,8 @@ app.use(express.text()); // ★ sendBeacon 対策 (タブ閉じ時の停止通�
 
 // 1. APIルーティング
 app.use('/api/stream', streamRoutes);
-app.use('/api/channel', channelRoutes); // ★ 追加 (/api/channels)
+app.use('/api/channel', channelRoutes); 
+app.use('/api/epg', epgRoutes);
 
 // 2. 生成された HLS ファイルを静的配信 (CORS許可)
 app.use('/hls', express.static(path.join(__dirname, 'public/hls')));

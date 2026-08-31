@@ -1,43 +1,17 @@
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config/env');
-const { openChannel, closeChannel } = require('./edcbControl');
+const { 
+  startEdcbTuner, 
+  stopEdcbTuner, 
+  startHeartbeatMonitor, 
+  getCurrentChannelKey 
+} = require('./edcbStream');
 
 let activeProcess = null;
-let currentChannelKey = null;
 let isStarting = false;
 let isStopping = false;
-
-let heartbeatTimer = null;
-let lastHeartbeatTime = Date.now();
-
-// ハートビートを受け取った時に呼ぶ関数
-function updateHeartbeat() {
-  lastHeartbeatTime = Date.now();
-}
-
-// ハートビート監視タイマーの開始
-function startHeartbeatMonitor() {
-  stopHeartbeatMonitor(); // 二重起動防止
-  lastHeartbeatTime = Date.now();
-
-  heartbeatTimer = setInterval(async () => {
-    // 最後のハートビートから 15秒 以上経過していたら無効とみなして自動停止
-    if (Date.now() - lastHeartbeatTime > 15000) {
-      console.log('[Heartbeat] Timeout detected (UI dead or closed). Stopping stream...');
-      stopHeartbeatMonitor();
-      await stopStream();
-    }
-  }, 5000); // 5秒ごとにチェック
-}
-
-function stopHeartbeatMonitor() {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-}
 
 if (!fs.existsSync(config.HLS_DIR)) {
   fs.mkdirSync(config.HLS_DIR, { recursive: true });
@@ -59,15 +33,9 @@ function cleanHlsDir() {
   }
 }
 
-/**
- * エンコーダーおよび設定された画質リストに応じた FFmpeg 引数（Stream マッピング・オプション）を動的に生成
- */
-// ffmpeg.js
 function buildDynamicFFmpegArgs(mode, targetQuality) {
   const isQsv = config.FFMPEG_ENCODER === 'qsv';
 
-  // single モードの場合は、指定された画質 1 本のみ
-  // multi モードの場合は ACTIVE_QUALITIES 全体を使用
   const qualities = (mode === 'single') 
     ? [targetQuality || config.ACTIVE_QUALITIES[0]] 
     : config.ACTIVE_QUALITIES;
@@ -82,7 +50,6 @@ function buildDynamicFFmpegArgs(mode, targetQuality) {
     encodeArgs.push('-map', '0:v:0', '-map', '0:a:0');
 
     if (isQsv) {
-      console.log('[FFMPEG] Use QSV Encode.');
       encodeArgs.push(
         `-c:v:${index}`, 'h264_qsv',
         `-preset:v:${index}`, 'veryfast',
@@ -112,44 +79,15 @@ function buildDynamicFFmpegArgs(mode, targetQuality) {
   };
 }
 
-
-async function findSendTsPipe(timeoutMs = 5000) {
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < timeoutMs) {
-    try {
-      const files = fs.readdirSync('\\\\.\\pipe\\');
-      const targetPipes = files.filter(file => file.startsWith('SendTSTCP_'));
-
-      if (targetPipes.length > 0) {
-        const selectedPipe = targetPipes[targetPipes.length - 1];
-        console.log(`[Pipe Finder] Found pipe: ${selectedPipe}`);
-        return `\\\\.\\pipe\\${selectedPipe}`;
-      }
-    } catch (err) {}
-
-    await new Promise(resolve => setTimeout(resolve, 200));
-  }
-
-  throw new Error('Timeout waiting for SendTSTCP_* pipe');
-}
-
-/**
- * master.m3u8 が生成され、サイズが 0 より大きくなるまで安全に待機
- */
 async function waitForFile(filePath, timeoutMs = 15000) {
   const startTime = Date.now();
   while (Date.now() - startTime < timeoutMs) {
     try {
       if (fs.existsSync(filePath)) {
         const stats = fs.statSync(filePath);
-        if (stats.size > 0) {
-          return true;
-        }
+        if (stats.size > 0) return true;
       }
-    } catch (e) {
-      // ファイルロック等のタイミングエラーはスルーして再試行
-    }
+    } catch (e) {}
     await new Promise(resolve => setTimeout(resolve, 300));
   }
   throw new Error(`Timeout waiting for file generation: ${filePath}`);
@@ -157,14 +95,13 @@ async function waitForFile(filePath, timeoutMs = 15000) {
 
 async function startStream(onid, tsid, sid, quality, callback) {
   const channelKey = `${onid}-${tsid}-${sid}`;
+  const currentKey = getCurrentChannelKey();
 
-  // 1. 既に同じチャンネルが稼働中なら既存のプレイリストを返す
-  if (activeProcess && currentChannelKey === channelKey) {
+  if (activeProcess && currentKey === channelKey) {
     console.log('[ffmpeg] Stream already running for this channel.');
     return callback(null, '/hls/master.m3u8');
   }
 
-  // 2. 二重起動（リクエスト連打など）をガード
   if (isStarting) {
     console.log('[ffmpeg] Stream is currently starting, skipping duplicate request...');
     return callback(null, '/hls/master.m3u8');
@@ -173,34 +110,29 @@ async function startStream(onid, tsid, sid, quality, callback) {
   isStarting = true;
 
   try {
-    // チャンネル切り替えの判定
-    const isChannelChange = activeProcess !== null && currentChannelKey !== channelKey;
+    const isChannelChange = activeProcess !== null && currentKey !== channelKey;
 
     if (isChannelChange) {
-      console.log(`[ffmpeg] Channel change detected: ${currentChannelKey} -> ${channelKey}`);
+      console.log(`[ffmpeg] Channel change detected: ${currentKey} -> ${channelKey}`);
       if (activeProcess) {
         const proc = activeProcess;
         activeProcess = null;
-        proc.kill('SIGKILL');
+        try {
+          if (process.platform === 'win32') {
+            execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' });
+          } else {
+            proc.kill('SIGKILL');
+          }
+        } catch (e) {}
       }
     } else if (!activeProcess) {
-      // 完全新規起動時のみ HLS キャッシュをリセット
       cleanHlsDir();
     }
 
-    console.log(`Sending NWTV set channel command: ONID=${onid}, TSID=${tsid}, SID=${sid}`);
-    await openChannel(onid, tsid, sid);
-    currentChannelKey = channelKey;
+    // EDCBのチューナーを起動し、パイプパスを取得
+    const pipePath = await startEdcbTuner(onid, tsid, sid);
 
-    console.log('[ffmpeg] Searching for SendTSTCP_* pipe...');
-    const pipePath = await findSendTsPipe(5000);
-    console.log(`[ffmpeg] Using pipe: ${pipePath}`);
-
-    // パイプ接続安定のためわずかに待機
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // 動的に FFmpeg 引数を生成
-    const mode = config.STREAM_MODE || 'single'; // config/env からモードを取得
+    const mode = config.STREAM_MODE || 'single';
     const dynamicConfig = buildDynamicFFmpegArgs(mode, quality);
 
     const ffmpegArgs = [
@@ -208,11 +140,7 @@ async function startStream(onid, tsid, sid, quality, callback) {
       '-analyzeduration', '3000000',
       '-probesize', '3000000',
       '-i', pipePath,
-
-      // 動的生成されたマップおよびエンコードパラメータ
       ...dynamicConfig.encodeArgs,
-
-      // HLS オプション設定
       '-f', 'hls',
       '-hls_time', '2',
       '-g', '60',
@@ -228,22 +156,31 @@ async function startStream(onid, tsid, sid, quality, callback) {
     const ffmpeg = spawn('ffmpeg', ffmpegArgs);
     activeProcess = ffmpeg;
 
-    // ハートビート監視を開始
-    startHeartbeatMonitor();
+    // Web UI用のハートビートタイマーを開始
+    startHeartbeatMonitor(stopStream);
 
+    // 1. FFmpeg の stderr ログ出力
     ffmpeg.stderr.on('data', (data) => {
-      // console.log(`[ffmpeg stderr] ${data.toString()}`);
+      const msg = data.toString();
+      if (msg.includes('Error') || msg.includes('corrupt') || msg.includes('timeout')) {
+        console.error(`[FFmpeg stderr] ${msg.trim()}`);
+      }
     });
 
-    ffmpeg.on('close', (code) => {
-      console.log(`[ffmpeg] Process exited with code: ${code}`);
+    // 2. FFmpeg 終了時のクリーンアップ（★重複を削除して集約）
+    ffmpeg.on('close', async (code, signal) => {
+      console.log(`[ffmpeg] Process exited with code: ${code}, signal: ${signal}`);
       activeProcess = null;
+
+      // 停止処理中（stopStream呼び出し済み）でない不意の終了の場合、追随して停止処理を実行
+      if (!isStopping) {
+        console.log('[ffmpeg] Unexpected termination detected. Cleaning up EDCB & HLS...');
+        await stopStream();
+      }
     });
 
     const masterPath = path.join(config.HLS_DIR, 'master.m3u8');
-    console.log('[ffmpeg] Waiting for master.m3u8 creation...');
     await waitForFile(masterPath, 15000);
-    console.log('[ffmpeg] master.m3u8 generated successfully.');
 
     callback(null, '/hls/master.m3u8');
 
@@ -256,23 +193,17 @@ async function startStream(onid, tsid, sid, quality, callback) {
   }
 }
 
-/**
- * FFmpeg プロセスおよび EDCB チューナーを完全に停止する
- */
+function getActiveProcess() {
+  return activeProcess;
+}
+
 async function stopStream() {
-  if (isStopping) {
-    console.log('[stopStream] Already stopping, skipping duplicate call.');
-    return;
-  }
+  if (isStopping) return;
   isStopping = true;
 
   try {
-    console.log('[stopStream] Stopping stream and releasing tuner...');
+    console.log('[stopStream] Stopping stream...');
 
-    // 1. ハートビート監視の停止
-    stopHeartbeatMonitor();
-
-    // 2. FFmpeg プロセスの強制終了
     if (activeProcess) {
       console.log(`[ffmpeg] Killing active process PID: ${activeProcess.pid}`);
       const proc = activeProcess;
@@ -280,30 +211,26 @@ async function stopStream() {
 
       try {
         if (process.platform === 'win32') {
-          require('child_process').execSync(`taskkill /F /T /PID ${proc.pid}`);
+          execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' });
         } else {
           proc.kill('SIGKILL');
         }
-      } catch (e) {
-        // すでに終了している場合のエラーは無視
-      }
+      } catch (e) {}
     }
 
-    currentChannelKey = null;
-
-    // 3. EDCB チューナーの開放
-    console.log('[stopStream] Calling closeChannel()...');
-    await closeChannel();
-
-    // 4. HLS キャッシュのクリア
-    cleanHlsDir();
-    console.log('[stopStream] Stream and tuner stopped successfully.');
-
   } catch (err) {
-    console.error('[stopStream Error]', err.message);
+    console.error('[stopStream FFmpeg Kill Error]', err.message);
+  }
+
+  // ★ FFmpeg殺傷の成功成否にかかわらず、確実にチューナー解放へ進む
+  try {
+    await stopEdcbTuner();
+    cleanHlsDir();
+  } catch (err) {
+    console.error('[stopStream EDCB Stop Error]', err.message);
   } finally {
     isStopping = false;
   }
 }
 
-module.exports = { startStream, stopStream, updateHeartbeat };
+module.exports = { startStream, stopStream, getActiveProcess };
