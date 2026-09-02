@@ -1,71 +1,28 @@
 .container {
   min-height: 100vh;
-  padding: 1.5rem;
+  width: 100%;
+  padding: 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
 }
 
 .contentWrapper {
   width: 100%;
-  max-width: 56rem;
+  max-width: 100%;
+  padding: 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
 }
 
 .header {
   border-bottom: 1px solid var(--border-color);
-  padding-bottom: 1rem;
+  padding: 12px 16px;
 }
 
 .header h1 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 700;
-}
-
-.controlsBar {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.btnPrimary {
-  background-color: var(--primary);
-  color: #fff;
-  border: none;
-  padding: 0.625rem 1.25rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  border-radius: 0.5rem;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.btnPrimary:hover:not(:disabled) {
-  background-color: var(--primary-hover);
-}
-
-.btnPrimary:disabled {
-  background-color: var(--disabled);
-  cursor: not-allowed;
-}
-
-/* モバイル対応 */
-@media (max-width: 640px) {
-  .container {
-    padding: 0.75rem;
-  }
-
-  .controlsBar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .btnPrimary {
-    width: 100%;
-    padding: 0.75rem;
-  }
 }

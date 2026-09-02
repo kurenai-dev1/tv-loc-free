@@ -53,6 +53,9 @@ export const VideoPlayer: React.FC = () => {
   // エラーメッセージ用のステート
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // チャンネル選択ダイアログ用ステート
+  const [isDialogOpen, setIsDialogOpen] = useState<boolean>(false);
+
   // 初回データ取得
   useEffect(() => {
     const fetchInitialData = async () => {
@@ -75,7 +78,7 @@ export const VideoPlayer: React.FC = () => {
 
         const res = await fetch('/api/channel/channels');
         const data: Channel[] = await res.json();
-        const mainChannels = data.filter(c => !c.isSub);
+        const mainChannels = data.filter((c) => !c.isSub);
         setAllChannels(mainChannels);
 
         const targetType = saved?.selectedType || 'GR';
@@ -84,15 +87,16 @@ export const VideoPlayer: React.FC = () => {
         let targetCh: Channel | undefined;
         if (saved?.channelKey) {
           const [onid, tsid, sid] = saved.channelKey.split('-').map(Number);
-          targetCh = mainChannels.find(c => c.onid === onid && c.tsid === tsid && c.sid === sid);
+          targetCh = mainChannels.find(
+            (c) => c.onid === onid && c.tsid === tsid && c.sid === sid
+          );
         }
 
         if (!targetCh) {
-          targetCh = mainChannels.find(c => c.type === targetType);
+          targetCh = mainChannels.find((c) => c.type === targetType);
         }
 
         if (targetCh) setCurrentChannel(targetCh);
-
       } catch (err) {
         console.error('Failed to fetch initial data:', err);
       }
@@ -101,7 +105,7 @@ export const VideoPlayer: React.FC = () => {
     fetchInitialData();
   }, []);
 
-  const filteredChannels = allChannels.filter(c => c.type === selectedType);
+  const filteredChannels = allChannels.filter((c) => c.type === selectedType);
 
   // 表示対象の各チャンネルごとに個別に API を呼び出して番組情報を更新
   const fetchCurrentEpgForFilteredChannels = () => {
@@ -109,13 +113,11 @@ export const VideoPlayer: React.FC = () => {
       const chKey = `${ch.onid}-${ch.tsid}-${ch.sid}`;
 
       try {
-        const res = await fetch(
-          `/api/epg/current?channel=${chKey}`
-        );
+        const res = await fetch(`/api/epg/current?channel=${chKey}`);
         if (res.ok) {
           const data: CurrentProgram | null = await res.json();
           if (data) {
-            setEpgMap(prev => ({
+            setEpgMap((prev) => ({
               ...prev,
               [chKey]: data,
             }));
@@ -140,8 +142,8 @@ export const VideoPlayer: React.FC = () => {
       video.load();
     }
     setStreamUrl(null);
-    setQualities([]);      
-    setCurrentQuality(-1); 
+    setQualities([]);
+    setCurrentQuality(-1);
   };
 
   const startStream = async (channel: Channel, quality?: string) => {
@@ -153,11 +155,14 @@ export const VideoPlayer: React.FC = () => {
       const targetQuality = quality || selectedQuality;
 
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({
-          selectedType: channel.type,
-          channelKey: `${channel.onid}-${channel.tsid}-${channel.sid}`,
-          quality: targetQuality,
-        }));
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            selectedType: channel.type,
+            channelKey: `${channel.onid}-${channel.tsid}-${channel.sid}`,
+            quality: targetQuality,
+          })
+        );
       } catch (e) {
         console.error('Failed to save settings to localStorage:', e);
       }
@@ -165,11 +170,11 @@ export const VideoPlayer: React.FC = () => {
       const res = await fetch('/api/stream/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          onid: channel.onid, 
-          tsid: channel.tsid, 
+        body: JSON.stringify({
+          onid: channel.onid,
+          tsid: channel.tsid,
           sid: channel.sid,
-          quality: targetQuality
+          quality: targetQuality,
         }),
       });
 
@@ -204,12 +209,11 @@ export const VideoPlayer: React.FC = () => {
     }
   };
 
-  // ★ チャンネル変更中の停止検知を抑止するハートビート処理
+  // チャンネル変更中の停止検知を抑止するハートビート処理
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
     if (isStreaming) {
       intervalId = setInterval(async () => {
-        // チャンネル変更中はサーバー側の停止状態チェックをスキップ
         if (isChangingChannel) {
           return;
         }
@@ -218,7 +222,6 @@ export const VideoPlayer: React.FC = () => {
           const res = await fetch('/api/stream/heartbeat', { method: 'POST' });
           if (res.ok) {
             const data = await res.json();
-            // タイミングによる誤検知を防ぐため、再度 isChangingChannel を確認
             if (data.isStreaming === false && !isChangingChannel) {
               console.warn('[Heartbeat] Server stream process has died. Cleaning up...');
               stopStream('サーバー側で配信処理（FFmpeg）が停止しました。');
@@ -232,7 +235,7 @@ export const VideoPlayer: React.FC = () => {
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [isStreaming, isChangingChannel]); // ★ isChangingChannel を依存配列に追加
+  }, [isStreaming, isChangingChannel]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -242,8 +245,8 @@ export const VideoPlayer: React.FC = () => {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        backBufferLength: 0,            
-        liveSyncDurationCount: 1,       
+        backBufferLength: 0,
+        liveSyncDurationCount: 1,
         liveMaxLatencyDurationCount: 3,
       });
 
@@ -262,17 +265,20 @@ export const VideoPlayer: React.FC = () => {
 
         if (videoRef.current) {
           videoRef.current.muted = false;
-          
-          videoRef.current.play().then(() => {
-            setIsMuted(false);
-          }).catch((err) => {
-            console.warn('Autoplay with audio blocked. Falling back to muted play.', err);
-            if (videoRef.current) {
-              videoRef.current.muted = true;
-              setIsMuted(true);
-              videoRef.current.play().catch(console.error);
-            }
-          });
+
+          videoRef.current
+            .play()
+            .then(() => {
+              setIsMuted(false);
+            })
+            .catch((err) => {
+              console.warn('Autoplay with audio blocked. Falling back to muted play.', err);
+              if (videoRef.current) {
+                videoRef.current.muted = true;
+                setIsMuted(true);
+                videoRef.current.play().catch(console.error);
+              }
+            });
         }
       });
 
@@ -330,7 +336,7 @@ export const VideoPlayer: React.FC = () => {
     const type = e.target.value as 'GR' | 'BS' | 'CS';
     setSelectedType(type);
 
-    const firstCh = allChannels.find(c => c.type === type);
+    const firstCh = allChannels.find((c) => c.type === type);
     if (firstCh) {
       setCurrentChannel(firstCh);
       if (isStreaming) {
@@ -339,14 +345,10 @@ export const VideoPlayer: React.FC = () => {
     }
   };
 
-  const handleChannelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const [onid, tsid, sid] = e.target.value.split('-').map(Number);
-    const targetCh = allChannels.find(c => c.onid === onid && c.tsid === tsid && c.sid === sid);
-    if (targetCh) {
-      setCurrentChannel(targetCh);
-      if (isStreaming) {
-        startStream(targetCh);
-      }
+  const changeChannel = (targetCh: Channel) => {
+    setCurrentChannel(targetCh);
+    if (isStreaming) {
+      startStream(targetCh);
     }
   };
 
@@ -365,6 +367,17 @@ export const VideoPlayer: React.FC = () => {
         startStream(currentChannel, val);
       }
     }
+  };
+
+  // select タグが押されたときにOS標準のドロップダウンを阻止してダイアログを開く
+  const handleSelectOpen = (
+    e: React.MouseEvent<HTMLSelectElement> | React.KeyboardEvent<HTMLSelectElement>
+  ) => {
+    e.preventDefault();
+    if (isChangingChannel) return;
+
+    fetchCurrentEpgForFilteredChannels();
+    setIsDialogOpen(true);
   };
 
   const handleUserInteraction = () => {
@@ -389,8 +402,8 @@ export const VideoPlayer: React.FC = () => {
           {errorMessage && (
             <div className={styles.overlay}>
               <p className={styles.errorMessage}>{errorMessage}</p>
-              <button 
-                className={styles.closeBtn} 
+              <button
+                className={styles.closeBtn}
                 onClick={() => setErrorMessage(null)}
               >
                 閉じる
@@ -432,35 +445,29 @@ export const VideoPlayer: React.FC = () => {
               <option value="CS">CS</option>
             </select>
 
-            {/* フォーカス時（セレクトボックスを開いた時）に対象チャンネル分を個別取得 */}
+            {/* selectタグはそのまま維持。クリックイベントだけをフックしてダイアログを表示 */}
             <select
-              value={currentChannel ? `${currentChannel.onid}-${currentChannel.tsid}-${currentChannel.sid}` : ''}
-              onChange={handleChannelChange}
-              onFocus={fetchCurrentEpgForFilteredChannels}
+              value={
+                currentChannel
+                  ? `${currentChannel.onid}-${currentChannel.tsid}-${currentChannel.sid}`
+                  : ''
+              }
+              onMouseDown={handleSelectOpen}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') handleSelectOpen(e);
+              }}
               disabled={isChangingChannel}
               className={`${styles.select} ${styles.channelSelect}`}
             >
-              {/* 選択後の表示用（閉じている時）：局名のみ表示 */}
-              {currentChannel && (
-                <option value={`${currentChannel.onid}-${currentChannel.tsid}-${currentChannel.sid}`} hidden>
+              {currentChannel ? (
+                <option
+                  value={`${currentChannel.onid}-${currentChannel.tsid}-${currentChannel.sid}`}
+                >
                   {currentChannel.name}
                 </option>
+              ) : (
+                <option value="">チャンネルを選択</option>
               )}
-
-              {/* プルダウン展開時のリスト */}
-              {filteredChannels.map(ch => {
-                const chKey = `${ch.onid}-${ch.tsid}-${ch.sid}`;
-                const epg = epgMap[chKey];
-
-                const timeStr = epg ? `[${epg.startTime}～${epg.endTime}]` : '[ --:--～--:-- ]';
-                const titleStr = epg ? epg.title : '番組情報なし';
-
-                return (
-                  <option key={chKey} value={chKey}>
-                    {ch.name.padEnd(10, '　')} {timeStr} {titleStr}
-                  </option>
-                );
-              })}
             </select>
 
             {streamMode === 'multi' ? (
@@ -497,6 +504,68 @@ export const VideoPlayer: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* selectタグクリック時に開くカスタムダイアログ */}
+      {isDialogOpen && (
+        <div
+          className={styles.dialogOverlay}
+          onClick={() => setIsDialogOpen(false)}
+        >
+          <div
+            className={styles.dialogContent}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.dialogHeader}>
+              <h3 className={styles.dialogTitle}>
+                チャンネルを選択 ({selectedType})
+              </h3>
+              <button
+                type="button"
+                className={styles.dialogCloseBtn}
+                onClick={() => setIsDialogOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className={styles.dialogList}>
+              {filteredChannels.map((ch) => {
+                const chKey = `${ch.onid}-${ch.tsid}-${ch.sid}`;
+                const epg = epgMap[chKey];
+                const isSelected =
+                  currentChannel?.onid === ch.onid &&
+                  currentChannel?.sid === ch.sid;
+
+                return (
+                  <button
+                    key={chKey}
+                    type="button"
+                    className={`${styles.dialogItem} ${
+                      isSelected ? styles.selected : ''
+                    }`}
+                    onClick={() => {
+                      changeChannel(ch);
+                      setIsDialogOpen(false);
+                    }}
+                  >
+                    <div className={styles.itemChannelName}>{ch.name}</div>
+                    <div className={styles.itemProgram}>
+                      <span className={styles.itemTime}>
+                        {epg
+                          ? `[${epg.startTime}～${epg.endTime}]`
+                          : '[--:--～--:--]'}
+                      </span>
+                      <span className={styles.itemTitle}>
+                        {epg ? epg.title : '番組情報なし'}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

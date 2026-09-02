@@ -1,7 +1,9 @@
 .container {
   width: 100%;
-  max-width: 860px;
+  max-width: 900px;
   margin: 0 auto;
+  padding: 16px;
+  box-sizing: border-box;
 
   .title {
     text-align: center;
@@ -13,15 +15,16 @@
   }
 
   .card {
+    width: 100%;
     background-color: var(--card-bg);
-    border-radius: 12px;
+    border-radius: 0;
     overflow: hidden;
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-    border: 1px solid var(--card-border);
+    border: none;
 
     /* 映像エリア */
     .screen {
-      position: relative; /* ★ オーバーレイの位置基準のために必須 */
+      position: relative;
       width: 100%;
       aspect-ratio: 16 / 9;
       background-color: #000000;
@@ -52,7 +55,7 @@
         pointer-events: none;
 
         .loadingText {
-          font-size: 1.2rem;
+          font-size: 1.1rem;
           font-weight: bold;
         }
       }
@@ -69,22 +72,22 @@
         flex-direction: column;
         justify-content: center;
         align-items: center;
-        padding: 24px;
+        padding: 16px;
         box-sizing: border-box;
         z-index: 20;
         text-align: center;
 
         .errorMessage {
           color: #ffffff;
-          font-size: 15px;
-          line-height: 1.6;
-          margin: 0 0 20px 0;
+          font-size: 14px;
+          line-height: 1.5;
+          margin: 0 0 16px 0;
           word-break: break-all;
         }
 
         .closeBtn {
-          height: 36px;
-          padding: 0 20px;
+          height: 32px;
+          padding: 0 16px;
           background-color: var(--primary);
           color: var(--text-main);
           border: none;
@@ -107,35 +110,33 @@
 
     /* 下部コントロールバー */
     .controls {
-      padding: 12px 16px;
+      padding: 8px;
       background-color: rgba(15, 23, 42, 0.6);
       border-top: 1px solid var(--border-color);
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
+      flex-direction: column;
+      gap: 8px;
+      box-sizing: border-box;
+      width: 100%;
 
       .actionArea {
         display: flex;
         align-items: center;
-        flex-shrink: 0;
+        width: 100%;
 
         .btn {
-          height: 40px;
-          padding: 0 16px;
+          height: 36px;
+          padding: 0 14px;
           border: none;
-          border-radius: 8px;
-          font-size: 14px;
+          border-radius: 6px;
+          font-size: 13px;
           font-weight: 600;
           cursor: pointer;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          gap: 8px;
           color: var(--text-main);
           white-space: nowrap;
-          flex-shrink: 0;
           box-sizing: border-box;
           transition: background-color 0.2s ease, transform 0.1s ease;
 
@@ -169,18 +170,19 @@
 
       .selectArea {
         display: flex;
-        gap: 8px;
-        width: 100%; /* 横幅いっぱいに広げる */
         align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-width: 0;
 
         .select {
-          height: 40px;
+          height: 36px;
           padding: 0 8px;
           background-color: var(--input-bg);
           color: var(--text-main);
           border: 1px solid var(--border-color);
-          border-radius: 8px;
-          font-size: 13px;
+          border-radius: 6px;
+          font-size: 12px;
           font-weight: 500;
           cursor: pointer;
           outline: none;
@@ -198,30 +200,173 @@
 
           &.typeSelect {
             flex: 0 0 auto;
-            width: auto;
-            min-width: 80px;
+            width: 76px;
           }
 
           &.channelSelect {
-            flex: 1; /* 余った横幅をすべて使う */
+            flex: 1;
             min-width: 0;
             text-overflow: ellipsis;
             white-space: nowrap;
             overflow: hidden;
-
-            option {
-              /* 等幅フォントで局名・時間・タイトルの位置を綺麗に揃える */
-              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",               monospace;
-              font-size: 13px;
-              padding: 6px 12px;
-              white-space: pre; /* スペース詰めを無効化 */
-            }
           }
 
           &.qualitySelect {
             flex: 0 0 auto;
-            width: auto;
-            min-width: 90px;
+            width: 80px;
+          }
+        }
+      }
+    }
+  }
+}
+
+/* ポップアップダイアログ */
+.dialogOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.dialogContent {
+  background-color: #1e293b;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+
+  .dialogHeader {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    .dialogTitle {
+      font-size: 14px;
+      font-weight: bold;
+      color: var(--text-main);
+      margin: 0;
+    }
+
+    .dialogCloseBtn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 0 4px;
+
+      &:hover {
+        color: var(--text-main);
+      }
+    }
+  }
+
+  .dialogList {
+    overflow-y: auto;
+    padding: 6px 0;
+
+    .dialogItem {
+      width: 100%;
+      padding: 10px 16px;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+      text-align: left;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      box-sizing: border-box;
+
+      &:hover,
+      &:active {
+        background-color: rgba(255, 255, 255, 0.08);
+      }
+
+      &.selected {
+        background-color: rgba(59, 130, 246, 0.15);
+        border-left: 3px solid var(--primary);
+      }
+
+      .itemChannelName {
+        font-size: 13px;
+        font-weight: bold;
+        color: var(--primary);
+      }
+
+      .itemProgram {
+        font-size: 12px;
+        color: var(--text-main);
+        display: flex;
+        gap: 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        .itemTime {
+          color: var(--text-muted);
+          font-size: 11px;
+          flex-shrink: 0;
+        }
+
+        .itemTitle {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+      }
+    }
+  }
+}
+
+/* モバイル表示調整 */
+@media (max-width: 640px) {
+  .container {
+    padding: 0;
+    width: 100%;
+
+    .card {
+      .controls {
+        padding: 6px;
+        gap: 6px;
+
+        .selectArea {
+          .select {
+            height: 32px;
+            font-size: 11px;
+
+            &.typeSelect {
+              width: 68px;
+            }
+
+            &.qualitySelect {
+              width: 74px;
+            }
+          }
+        }
+
+        .actionArea {
+          .btn {
+            height: 32px;
+            font-size: 12px;
+            padding: 0 10px;
           }
         }
       }
