@@ -10,6 +10,16 @@ interface QualityLevel {
 
 const STORAGE_KEY = 'video_player_settings';
 
+// タブ単位で一意の ID を取得・保持するヘルパー関数
+const getClientId = (): string => {
+let clientId = sessionStorage.getItem('stream_client_id');
+  if (!clientId) {
+    clientId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    sessionStorage.setItem('stream_client_id', clientId);
+  }
+  return clientId;
+};
+
 export const useHlsPlayer = (
   selectedQuality: string,
   setSelectedQuality: (q: string) => void
@@ -22,6 +32,7 @@ export const useHlsPlayer = (
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [isChangingChannel, setIsChangingChannel] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(true);
+  const [isVisitor, setIsVisitor] = useState<boolean>(false); // ★ ビジター状態を追加
 
   // 画質関連
   const [streamMode, setStreamMode] = useState<'multi' | 'single'>('multi');
@@ -54,11 +65,16 @@ export const useHlsPlayer = (
   const stopStream = useCallback(async (reason?: string) => {
     resetHls();
     try {
-      await fetch('/api/stream/stop', { method: 'POST' });
+      await fetch('/api/stream/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: getClientId() }), // ★ clientId を送信
+      });
     } catch (err) {
       console.error('Failed to stop stream:', err);
     }
     setIsStreaming(false);
+    setIsVisitor(false); // ★ ビジター状態のリセット
     if (reason) {
       setErrorMessage(reason);
     }
@@ -94,6 +110,7 @@ export const useHlsPlayer = (
           tsid: channel.tsid,
           sid: channel.sid,
           quality: targetQuality,
+          clientId: getClientId(), // ★ clientId を送信
         }),
       });
 
@@ -104,10 +121,12 @@ export const useHlsPlayer = (
       if (data.playlist) {
         setStreamUrl(`${data.playlist}?t=${Date.now()}`);
         setIsStreaming(true);
+        setIsVisitor(data.isVisitor ?? false); // ★ サーバーからのビジター判定を反映
       }
     } catch (err) {
       console.error('Failed to start stream:', err);
       setIsStreaming(false);
+      setIsVisitor(false);
       resetHls();
       setErrorMessage('配信の開始に失敗しました。');
     } finally {
@@ -123,7 +142,11 @@ export const useHlsPlayer = (
         if (isChangingChannel) return;
 
         try {
-          const res = await fetch('/api/stream/heartbeat', { method: 'POST' });
+          const res = await fetch('/api/stream/heartbeat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId: getClientId() }), // ★ clientId を送信
+          });
           if (res.ok) {
             const data = await res.json();
             if (data.isStreaming === false && !isChangingChannel) {
@@ -223,7 +246,11 @@ export const useHlsPlayer = (
   // タブ閉じ・画面遷移時の停止送信
   useEffect(() => {
     const handleBeforeUnload = () => {
-      navigator.sendBeacon('/api/stream/stop');
+      // sendBeacon で JSON データと clientId を確実に渡すための Blob 記述
+      const blob = new Blob([JSON.stringify({ clientId: getClientId() })], {
+        type: 'application/json',
+      });
+      navigator.sendBeacon('/api/stream/stop', blob);
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
@@ -259,6 +286,7 @@ export const useHlsPlayer = (
   return {
     videoRef,
     isStreaming,
+    isVisitor, // ★ 返り値に追加（コンポーネントで UI 制限に利用可能）
     isChangingChannel,
     errorMessage,
     setErrorMessage,

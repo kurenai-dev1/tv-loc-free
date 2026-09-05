@@ -7,11 +7,14 @@ const { startEdcbTuner, stopEdcbTuner } = require('../services/edcbStream');
 const { getActiveProcess } = require('../services/ffmpeg');
 
 // サービス層から関数を読み込み
-const { startStream, stopStream} = require('../services/ffmpeg');
+const { startStream, stopStream } = require('../services/ffmpeg');
 const { updateHeartbeat } = require('../services/edcbStream');
 
 // HLS出力先の絶対パス（環境に合わせて調整してください）
 const HLS_DIR_PATH = path.join(__dirname, '../../public/hls');
+
+// ★ 現在配信（FFmpeg）を所有しているホストの clientId を保持する変数
+let currentHostClientId = null;
 
 /**
  * 最初の .ts セグメント（サイズ > 0）の生成を待つ関数
@@ -65,11 +68,20 @@ function cleanHlsDirectory(dirPath) {
 
 // ハートビート受信用 API (POST /api/stream/heartbeat)
 router.post('/heartbeat', (req, res) => {
-  updateHeartbeat();
+  const { clientId } = req.body;
 
   // FFmpeg プロセスが存在し、終了していなければ true
   const activeProcess = getActiveProcess();
   const isStreaming = activeProcess !== null && !activeProcess.killed;
+
+  // ★ 配信中かつ「ホスト」からのハートビートの場合のみ EDCB 側のタイマーを更新
+  if (isStreaming && currentHostClientId && currentHostClientId === clientId) {
+    updateHeartbeat();
+  } else if (!isStreaming) {
+    // FFmpeg が落ちている場合はホストもクリア
+    currentHostClientId = null;
+  }
+
   res.json({ status: 'ok', isStreaming: isStreaming });
 });
 
@@ -77,8 +89,7 @@ router.post('/heartbeat', (req, res) => {
  * 配信開始 API (POST /api/stream/start)
  */
 router.post('/start', async (req, res) => {
-  // ★ 1. req.body から quality を受け取る
-  const { onid, tsid, sid, quality } = req.body;
+  const { onid, tsid, sid, quality, clientId } = req.body;
 
   if (onid === undefined || tsid === undefined || sid === undefined) {
     return res.status(400).json({ error: 'Missing onid, tsid, or sid' });
@@ -88,7 +99,23 @@ router.post('/start', async (req, res) => {
   const numTsid = parseInt(tsid, 10);
   const numSid = parseInt(sid, 10);
 
-  console.log(`[API /stream] Starting stream for ONID:${numOnid}, TSID:${numTsid}, SID:${numSid}, Quality:${quality || 'default'}`);
+  // ★ 現在 FFmpeg が動いているか確認
+  const activeProcess = getActiveProcess();
+  const isStreamingActive = activeProcess !== null && !activeProcess.killed;
+
+  // ★【ケース1】既に配信中で、かつリクエスト元が現在のホストではない場合（ビジター処理）
+  if (isStreamingActive && currentHostClientId !== null && currentHostClientId !== clientId) {
+    console.log(`[API /stream] Visitor connected (ClientID: ${clientId}). Reusing current stream.`);
+    return res.json({
+      success: true,
+      playlist: '/hls/master.m3u8',
+      url: '/hls/master.m3u8',
+      isVisitor: true, // フロントエンドにビジターであることを通知
+    });
+  }
+
+  // ★【ケース2】新規配信開始、またはホスト自身によるチャンネル変更・再リクエスト処理
+  console.log(`[API /stream] Starting/Updating stream for Host (ClientID: ${clientId}), ONID:${numOnid}, TSID:${numTsid}, SID:${numSid}, Quality:${quality || 'default'}`);
 
   try {
     // 1. 古い FFmpeg プロセスの終了 ＆ HLS ディレクトリのクリア
@@ -96,7 +123,6 @@ router.post('/start', async (req, res) => {
     cleanHlsDirectory(HLS_DIR_PATH);
 
     // 2. FFmpeg 起動
-    // ★ 2. startStream に numOnid, numTsid, numSid, quality, callback の順番で渡す
     await new Promise((resolve, reject) => {
       startStream(numOnid, numTsid, numSid, quality, (err, playlist) => {
         if (err) reject(err);
@@ -110,16 +136,26 @@ router.post('/start', async (req, res) => {
     if (!isReady) {
       console.error('[Stream Error] Timeout: TS segment was not generated in time.');
       await stopStream();
+      currentHostClientId = null;
       return res.status(504).json({ error: 'Stream generation timed out.' });
     }
+
+    // ★ ホストIDを現在の clientId に更新・保持
+    currentHostClientId = clientId;
     updateHeartbeat();
 
     // 4. 準備完了後にレスポンスを返す
-    return res.json({ success: true, playlist: '/hls/master.m3u8', url: '/hls/master.m3u8' });
+    return res.json({
+      success: true,
+      playlist: '/hls/master.m3u8',
+      url: '/hls/master.m3u8',
+      isVisitor: false,
+    });
 
   } catch (err) {
     console.error('[API /stream Error]', err);
     await stopStream();
+    currentHostClientId = null;
     return res.status(500).json({ error: 'Failed to start stream', details: err.message });
   }
 });
@@ -128,9 +164,23 @@ router.post('/start', async (req, res) => {
  * 配信停止 & チューナー解放 API (POST /api/stream/stop)
  */
 router.post('/stop', async (req, res) => {
+  const { clientId } = req.body;
+
   try {
-    console.log('[API] Stop stream requested');
+    console.log(`[API] Stop stream requested from ClientID: ${clientId}`);
+
+    const activeProcess = getActiveProcess();
+    const isStreamingActive = activeProcess !== null && !activeProcess.killed;
+
+    // ★ 配信中かつ、リクエスト元がホストではない（ビジター）場合は、FFmpegを殺さず離脱だけ許可する
+    if (isStreamingActive && currentHostClientId !== null && currentHostClientId !== clientId) {
+      console.log(`[API] Visitor (ClientID: ${clientId}) left. Keeping stream alive for host.`);
+      return res.json({ success: true, message: 'Visitor disconnected successfully' });
+    }
+
+    // ★ ホストからの停止要求、または既に配信が停まっている場合は FFmpeg・EDCB を停止
     await stopStream();
+    currentHostClientId = null;
     res.json({ success: true, message: 'Stream stopped successfully' });
   } catch (err) {
     console.error('[API Error] Failed to stop stream:', err);
@@ -140,15 +190,14 @@ router.post('/stop', async (req, res) => {
 
 // GET /api/stream/config
 router.get('/config', (req, res) => {
-  // .env から STREAM_MODE と STREAM_QUALITIES を取得
   const mode = process.env.STREAM_MODE || 'multi';
   const qualities = process.env.STREAM_QUALITIES 
     ? process.env.STREAM_QUALITIES.split(',') 
     : ['720p', '480p', '360p'];
 
   res.json({
-    mode,               // 'multi' または 'single'
-    qualities,          // ['720p', '480p', '360p']
+    mode,
+    qualities,
     defaultQuality: qualities[0] || '720p',
   });
 });
@@ -177,9 +226,7 @@ router.get('/live/:channelId', async (req, res) => {
 
     readStream = fs.createReadStream(pipePath);
 
-    // ★ EPIPE / ECONNRESET 等のパイプ切断エラーをハンドリングして落ちないようにする
     readStream.on('error', (err) => {
-      // EPIPE は接続先（JellyfinのFFmpeg）が急に切れた際によく出る正常な切断エラー
       if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
         console.log(`[Jellyfin Direct TS] パイプ切断を検知 (${err.code}): 正常終了処理を行います`);
       } else {

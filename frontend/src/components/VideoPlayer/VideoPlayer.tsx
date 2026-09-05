@@ -20,6 +20,7 @@ export const VideoPlayer: React.FC = () => {
   const {
     videoRef,
     isStreaming,
+    isVisitor, // ★
     isChangingChannel,
     errorMessage,
     setErrorMessage,
@@ -34,6 +35,10 @@ export const VideoPlayer: React.FC = () => {
     handleQualityChange,
     handleUserInteraction,
   } = useHlsPlayer(selectedQuality, setSelectedQuality);
+
+
+  // チャンネル選択のみを無効化する判定
+  const isChannelSelectDisabled = isChangingChannel || isVisitor;
 
   // 初回データ取得
   useEffect(() => {
@@ -183,7 +188,7 @@ export const VideoPlayer: React.FC = () => {
             <select
               value={selectedType}
               onChange={handleTypeChange}
-              disabled={isChangingChannel}
+              disabled={isChannelSelectDisabled} // isVisitor 
               className={`${styles.select} ${styles.typeSelect}`}
             >
               <option value="GR">地デジ</option>
@@ -197,18 +202,22 @@ export const VideoPlayer: React.FC = () => {
                   ? `${currentChannel.onid}-${currentChannel.tsid}-${currentChannel.sid}`
                   : ''
               }
-              onMouseDown={handleSelectOpen}
+              onMouseDown={(e) => {
+              if (isChannelSelectDisabled) return; // isVisitor なら無効
+                handleSelectOpen(e);
+              }}
               onKeyDown={(e) => {
+                if (isChannelSelectDisabled) return; // isVisitor なら無効
                 if (e.key === 'Enter' || e.key === ' ') handleSelectOpen(e);
               }}
-              disabled={isChangingChannel}
+              disabled={isChannelSelectDisabled} // isVisitor の場合も
               className={`${styles.select} ${styles.channelSelect}`}
             >
               {currentChannel ? (
                 <option
                   value={`${currentChannel.onid}-${currentChannel.tsid}-${currentChannel.sid}`}
                 >
-                  {currentChannel.name}
+                  {!isVisitor ? currentChannel.name : ' (視聴専用：他端末で操作中)'}
                 </option>
               ) : (
                 <option value="">チャンネルを選択</option>
