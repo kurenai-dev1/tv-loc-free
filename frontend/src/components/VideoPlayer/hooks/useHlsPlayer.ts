@@ -172,10 +172,12 @@ export const useHlsPlayer = (
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
+        lowLatencyMode: true,           // LL-HLSモード有効化
         backBufferLength: 0,
-        liveSyncDurationCount: 1,
-        liveMaxLatencyDurationCount: 3,
+        liveSyncDurationCount: 1,       // 最新1セグメント目から再生開始
+        liveMaxLatencyDurationCount: 2,
+        maxBufferLength: 3,             // バッファを溜め込まず即再生
+        liveBackBufferLength: 0,
       });
 
       hls.loadSource(streamUrl);

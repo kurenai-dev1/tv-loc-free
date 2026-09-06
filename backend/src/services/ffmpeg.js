@@ -137,19 +137,22 @@ async function startStream(onid, tsid, sid, quality, callback) {
 
     const ffmpegArgs = [
       '-y',
-      '-analyzeduration', '3000000',
-      '-probesize', '3000000',
+      '-analyzeduration', '500000', // 分析時間を0.5秒に制限
+      '-probesize', '1000000',  // プローブサイズを削減
       '-i', pipePath,
+      '-preset', 'ultrafast',        // 起動・処理の遅延を最少化
+      '-tune', 'zerolatency',        // エンコード遅延をゼロ化
       ...dynamicConfig.encodeArgs,
       '-f', 'hls',
-      '-hls_time', '2',
-      '-g', '60',
+      '-hls_time', '1', // セグメント長を2-> 1 秒に設定
+      '-g', '30', // 60->30
       '-keyint_min', '60',
       '-sc_threshold', '0',
       '-hls_list_size', '3',
       '-hls_flags', 'delete_segments+omit_endlist+independent_segments',
       '-var_stream_map', dynamicConfig.varStreamMap,
       '-master_pl_name', 'master.m3u8',
+      '-hls_init_time', '1', // ★ 初期プレイリストを1セグメントで即書き出しさせる
       path.join(config.HLS_DIR, 'stream_%v.m3u8')
     ];
 

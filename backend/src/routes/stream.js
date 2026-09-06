@@ -40,7 +40,7 @@ async function waitForFirstSegment(dirPath, timeoutMs = 10000) {
         // ファイル書き込みアクセス競合時のガード
       }
     }
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await new Promise(resolve => setTimeout(resolve, 50));
   }
 
   return false;
