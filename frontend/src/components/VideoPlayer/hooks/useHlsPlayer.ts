@@ -174,9 +174,9 @@ export const useHlsPlayer = (
         enableWorker: true,
         lowLatencyMode: true,           // LL-HLSモード有効化
         backBufferLength: 0,
-        liveSyncDurationCount: 1,       // 最新1セグメント目から再生開始
-        liveMaxLatencyDurationCount: 2,
-        maxBufferLength: 3,             // バッファを溜め込まず即再生
+        liveSyncDurationCount: 2,       // 開始遅延秒数(1だと余裕がなくて低回線時にpauseが多発する)
+        liveMaxLatencyDurationCount: 4, // 強制シーク秒数(>liveSyncDurationCount)シークバーが一瞬出る
+        maxBufferLength: 15,            // 秒数分 バッファは大きくても速度には関係しない
         liveBackBufferLength: 0,
       });
 

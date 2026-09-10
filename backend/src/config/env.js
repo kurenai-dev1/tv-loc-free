@@ -7,6 +7,7 @@ const QUALITY_PROFILES = {
   '720p':  { height: 720,  width: 1280, videoBitrate: '1.5M', audioBitrate: '128k' },
   '480p':  { height: 480,  width: 854,  videoBitrate: '600k',   audioBitrate: '96k'  },
   '360p':  { height: 360,  width: 640,  videoBitrate: '300k', audioBitrate: '96k'  },
+  '240p':  { height: 240,  width: 480,  videoBitrate: '150k', audioBitrate: '64k'  },
 };
 
 // .env からカンマ区切りで画質設定を取得（未指定の場合はデフォルト 720p,480p）
