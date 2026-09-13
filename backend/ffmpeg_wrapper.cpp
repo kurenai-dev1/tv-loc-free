@@ -1,64 +1,112 @@
 //
-// FFmpeg ‚ğŒÄ‚Ño‚·ƒ‰ƒbƒp[
+// FFmpeg ã‚’å‘¼ã³å‡ºã™ãƒ©ãƒƒãƒ‘ãƒ¼ï¼ˆãƒ­ã‚°å‡ºåŠ›ä»˜ãï¼‰
 //
 //    cl /O2 /EHsc ffmpeg_wrapper.cpp
 //    ffmpeg.exe -> ffmpeg_original.exe
 //    ffmpeg_wrapper.exe -> ffmpeg.exe
 //
-#include <iostream>
+#include <stdio.h>
 #include <string>
 #include <vector>
 #include <windows.h>
 
-// •¶š—ñ’uŠ·ƒwƒ‹ƒp[
+// æ–‡å­—åˆ—ç½®æ›ãƒ˜ãƒ«ãƒ‘ãƒ¼
 std::string replaceAll(std::string str, const std::string& from, const std::string& to) {
     size_t start_pos = 0;
-    while((start_pos = str.find(from, start_pos)) != std::string::npos) {
+    while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
         str.replace(start_pos, from.length(), to);
         start_pos += to.length();
     }
     return str;
 }
 
-int main() {
-    // 1. Jellyfin ‚ª”­s‚µ‚½‘S‘Ì‚ÌƒRƒ}ƒ“ƒhƒ‰ƒCƒ“ˆø”‚ğæ“¾
-    std::string cmdLine = GetCommandLineA();
+// ãƒ­ã‚°å‡ºåŠ›é–¢æ•° (std::cerr ã‚„ << ã‚’ä½¿ã‚ãšã« C ã®ãƒ•ã‚¡ã‚¤ãƒ«å‡¦ç†ã§æ›¸ãå‡ºã™)
+void writeLog(const char* originalCmd, const char* replacedCmd, DWORD errorNumber) {
+    FILE* fp = NULL;
+    fopen_s(&fp, "ffmpeg_wrapper.log", "a");
+    if (!fp) return;
 
-    // 2. –â‘è‚Ìƒpƒ‰ƒ[ƒ^‚ğ’á’x‰„—pƒpƒ‰ƒ[ƒ^‚É’uŠ·
-    // -probesize 1G -> -probesize 500k
-    cmdLine = replaceAll(cmdLine, "-probesize 1G", "-probesize 500k");
-    
-    // -analyzeduration 3000000 -> -analyzeduration 500000 (•K—v‚É‰‚¶‚Ä)
+    // ç¾åœ¨æ™‚åˆ»ã‚’å–å¾—
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+
+    fprintf(fp, "[%04d-%02d-%02d %02d:%02d:%02d.%03d]\n",
+            st.wYear, st.wMonth, st.wDay,
+            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+
+    if (originalCmd) {
+        fprintf(fp, "  [Original] %s\n", originalCmd);
+    }
+    if (replacedCmd) {
+        fprintf(fp, "  [Replaced] %s\n", replacedCmd);
+    }
+    if (errorNumber != 0) {
+        fprintf(fp, "  [Error] Failed to start ffmpeg_original.exe. Code: %lu\n", errorNumber);
+    }
+
+    fprintf(fp, "--------------------------------------------------\n");
+    fclose(fp);
+}
+
+int main() {
+    // 1. Jellyfin ãŒç™ºè¡Œã—ãŸå…¨ä½“ã®ã‚³ãƒãƒ³ãƒ‰ãƒ©ã‚¤ãƒ³å¼•æ•°ã‚’å–å¾—
+    std::string origCmdLine = GetCommandLineA();
+
+    // â˜… å•é¡Œã®ãƒ‘ãƒ©ãƒ¡ãƒ¼ã‚¿ã‚’ä½é…å»¶ç”¨ãƒ‘ãƒ©ãƒ¡ãƒ¼ã‚¿ã«ç½®æ›
+    std::string cmdLine = replaceAll(origCmdLine, "-probesize 1G", "-probesize 500k");
     cmdLine = replaceAll(cmdLine, "-analyzeduration 3000000", "-analyzeduration 500000");
 
-    // 3. ŒÄ‚Ño‚·–{•¨‚Ì FFmpeg ƒpƒX (“¯ŠK‘w‚Ì ffmpeg_original.exe)
+    // ä¸Šè¨˜ä»¥å¤–ã®æ”¹å–„ç‚¹
+    // 1. -re ã‚’å‰Šé™¤ï¼ˆç©ºæ–‡å­—ã«ç½®æ›ï¼‰
+    // å‰å¾Œã«ã‚¹ãƒšãƒ¼ã‚¹ã‚’å…¥ã‚Œã¦å­¤ç«‹ã—ãŸ "-re " ã‚’æ¶ˆã™
+    cmdLine = replaceAll(cmdLine, " -re ", " ");
+
+    // 2. GOPé•·ã¨ã‚»ã‚°ãƒ¡ãƒ³ãƒˆé•·ã‚’1ç§’ã«çŸ­ç¸®
+    cmdLine = replaceAll(cmdLine, "-g:v:0 90", "-g:v:0 30");
+    cmdLine = replaceAll(cmdLine, "-keyint_min:v:0 90", "-keyint_min:v:0 30");
+    cmdLine = replaceAll(cmdLine, "-hls_time 3", "-hls_time 1 -hls_init_time 1");
+
+    // 3. ãƒ—ãƒªã‚»ãƒƒãƒˆã‚’æœ€é€ŸåŒ–ã—ã€é…å»¶ã‚¼ãƒ­ãƒ¢ãƒ¼ãƒ‰ã‚’è¿½åŠ 
+    //  "-tune zerolatency" ã¯ã€"h264_qsv"ã¨ã¯ç›¸å®¹ã‚Œãªã„
+    // cmdLine = replaceAll(cmdLine, "-preset veryfast", "-preset ultrafast -tune zerolatency");
+    // cmdLine = replaceAll(cmdLine, "-preset veryfast", "-preset ultrafast");
+
+    // h264_qsv ã‚’ hevc_qsv (H.265) ã«å¼·åˆ¶ç½®æ›
+    // chrome ã‚„å¤šãã®ãƒ–ãƒ©ã‚¦ã‚¶ã¯ã€h.265ã‚’å†ç”Ÿã§ããªã„ã€‚ï¼ˆç‰¹è¨±ã®é–¢ä¿‚ï¼‰Apple ç³»ã¯å¯èƒ½ã‚‰ã—ã„ã€‚
+    // cmdLine = replaceAll(cmdLine, "-codec:v:0 h264_qsv", "-codec:v:0 hevc_qsv");
+
+    // ãƒ­ã‚°ã«ãƒ‘ãƒ©ãƒ¡ãƒ¼ã‚¿ã‚’æ›¸ãå‡ºã—
+    writeLog(origCmdLine.c_str(), cmdLine.c_str(), 0);
+
+    // 3. å‘¼ã³å‡ºã™æœ¬ç‰©ã® FFmpeg ãƒ‘ã‚¹ (åŒéšå±¤ã® ffmpeg_original.exe)
     std::string targetExe = "ffmpeg_original.exe";
 
-    // 4. ƒvƒƒZƒX‹N“®—p‚Ì\‘¢‘Ì€”õ
+    // 4. ãƒ—ãƒ­ã‚»ã‚¹èµ·å‹•ç”¨ã®æ§‹é€ ä½“æº–å‚™
     STARTUPINFOA si;
     PROCESS_INFORMATION pi;
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(pi));
 
-    // CreateProcess —p‚É‘‚«Š·‚¦‰Â”\‚Èƒ`ƒƒƒ‹”z—ñ‚ğ—pˆÓ
+    // CreateProcess ç”¨ã«æ›¸ãæ›ãˆå¯èƒ½ãªãƒãƒ£ãƒ«é…åˆ—ã‚’ç”¨æ„
     std::vector<char> cmdBuffer(cmdLine.begin(), cmdLine.end());
     cmdBuffer.push_back('\0');
 
-    // 5. –{•¨‚Ì FFmpeg ‚ğ‹N“®
+    // 5. æœ¬ç‰©ã® FFmpeg ã‚’èµ·å‹•
     BOOL result = CreateProcessA(
-        targetExe.c_str(),  // ƒAƒvƒŠƒP[ƒVƒ‡ƒ“–¼
-        cmdBuffer.data(),   // ’uŠ·Œã‚ÌƒRƒ}ƒ“ƒhƒ‰ƒCƒ“ˆø”
+        targetExe.c_str(),  // ã‚¢ãƒ—ãƒªã‚±ãƒ¼ã‚·ãƒ§ãƒ³å
+        cmdBuffer.data(),   // ç½®æ›å¾Œã®ã‚³ãƒãƒ³ãƒ‰ãƒ©ã‚¤ãƒ³å¼•æ•°
         NULL, NULL, FALSE, 0, NULL, NULL,
         &si, &pi
     );
 
     if (!result) {
-        std::cerr << "[Wrapper Error] Failed to start ffmpeg_original.exe. Error: " << GetLastError() << std::endl;
+        DWORD err = GetLastError();
+        writeLog(NULL, NULL, err);
         return 1;
     }
 
-    // 6. –{•¨‚Ì FFmpeg ‚ªI—¹‚·‚é‚Ü‚Å‘Ò‹@‚µAI—¹ƒR[ƒh‚ğ‚»‚Ì‚Ü‚Ü•Ô‚·
+    // 6. æœ¬ç‰©ã® FFmpeg ãŒçµ‚äº†ã™ã‚‹ã¾ã§å¾…æ©Ÿã—ã€çµ‚äº†ã‚³ãƒ¼ãƒ‰ã‚’ãã®ã¾ã¾è¿”ã™
     WaitForSingleObject(pi.hProcess, INFINITE);
 
     DWORD exitCode = 0;
