@@ -31,9 +31,13 @@ const jellyfinChannels = [
 **id** は、ONID-TSID-SID です。  
 チャンネルの一覧は、`http://localhost:3000/api/channel/channels/` で JSON 形式で確認できます。
 
+> [!IMPORTANT]
 > EDCBとTvLocFree があるPCが別であれば、localhost をIPアドレスに変えて下さい。
 
 # Jellyfin の設定
+
+<img width="754" height="669" alt="Image" src="https://github.com/user-attachments/assets/5153dd22-8fa2-4675-8d30-1a3033a6050c" />
+
 「ライブTV チューナーのセットアップ」でAPIのURLを設定します。  
 ```text
 http://localhost:3000/api/channel/channels.m3u
@@ -48,15 +52,17 @@ http://localhost:3000/api/epg/epg.xml
 なお、本来１週間分を送れますが、録画機能を使わないので節約しています。  
 
 ## ライブ視聴が開始されず止まってしまう
-10分後に再生が開始されました。  
-たまたまかも知れませんが、私の使ったバージョンで発生したトラブルです。  
-原因は、Jellyfin 側にあります。  
-動画エンコードに使っている FFmpeg へのパラメータが正しくありません。  
-設定で値を変更する事は難しいので、FFmpeg を起動するラッパーを使うのが一つの方法です。  
+10分後にやっと再生が開始される場合があります。  
+TSの解析に失敗するのが原因ですが問題は　Jellyfin 側にもあります。  
+動画エンコードに使っている FFmpeg/FFprobe へのパラメータが適切ではありません。  
+設定で値を変更する事は難しいので、それぞれ、パラメータを書き換えるラッパーを使うのが一つの方法です。  
+ソースコード(.cpp)は添付してあるので、自分でコンパイルして下さい。
 
-* FFmpeg_wrapper.exe というラッパーを作る(FFmpeg_original.exeを起動する)
-* オリジナルの FFmpeg.exe -> FFmpeg_original.exe に名前変更
-* ラッパーを FFmpeg.exe に変えて代わりに置く
+* ffmpeg_wrapper.exe というラッパーを作る(ffmpeg_original.exeを起動する)
+* オリジナルの ffmpeg.exe -> ffmpeg_original.exe に名前変更
+* ラッパーを ffmpeg.exe に変えて代わりに置く
+* 同様に、ffprobe.exe も行う
+
 
  
 
