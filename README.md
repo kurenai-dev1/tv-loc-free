@@ -1,6 +1,7 @@
 # tv-loc-free
 TS抜き環境でTVを遠隔で観る為のアプリです。  
 動画ファイルの視聴や録画機能はありません。  
+Jellyfin 用の [インターフェース](https://github.com/kurenai-dev1/tv-loc-free/blob/main/Jellyfin.md)もテスト用に付けました。  
 **私はコードをほとんど書いてません。大部分Geminiが書いてます。**  
 
 # 目指したもの
