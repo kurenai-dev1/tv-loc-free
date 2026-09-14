@@ -203,6 +203,20 @@ router.get('/config', (req, res) => {
 });
 
 /**
+ * Jellyfin の MIME タイプチェック（HEAD リクエスト）用ハンドラー
+ */
+router.head('/live/:channelId', (req, res) => {
+  const { channelId } = req.params;
+  const targetCh = jellyfinChannels.find(ch => ch.id === channelId);
+  if (!targetCh) return res.status(404).end();
+
+  // チューナーは起動せず、ヘッダーだけを即座に返して Jellyfin のチェックを通過させる
+  res.setHeader('Content-Type', 'video/mp2t');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.status(200).end();
+});
+
+/**
  * Jellyfin 用 Direct TS データ配信 API
  * GET /api/stream/live/:channelId
  */
